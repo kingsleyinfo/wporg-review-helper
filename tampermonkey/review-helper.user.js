@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Kingsleyinfo/wporg-review-helper
 // @updateURL    https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
-// @version      2.0.0
+// @version      2.1.0
 // @description  Analyzes WordPress.org support threads using AI and recommends review request templates based on customer sentiment.
 // @author       Kay (Kingsleyinfo)
 // @match        https://wordpress.org/support/topic/*
@@ -629,6 +629,92 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
   }
 
   // ──────────────────────────────────────────────
+  // 6b. PLUGIN DETECTION & REVIEW LINK
+  // ──────────────────────────────────────────────
+
+  /**
+   * Detects the plugin slug from the current WordPress.org support page.
+   * Tries multiple strategies: breadcrumbs, sidebar links, and page metadata.
+   * Returns the review URL or null if the plugin can't be detected.
+   */
+  function detectPluginReviewLink() {
+    let pluginSlug = null;
+
+    // Strategy 1: Breadcrumb navigation
+    // WordPress.org forum pages have breadcrumbs like:
+    // Home > Forums > Plugins > Plugin Name > [Topic]
+    // The plugin link in the breadcrumb contains /support/plugin/{slug}/
+    const breadcrumbLinks = document.querySelectorAll('.bbp-breadcrumb a, .breadcrumb a, nav a');
+    for (const link of breadcrumbLinks) {
+      const href = link.getAttribute('href') || '';
+      const match = href.match(/\/support\/plugin\/([^/]+)/);
+      if (match) {
+        pluginSlug = match[1];
+        break;
+      }
+    }
+
+    // Strategy 2: Sidebar or page links containing /plugins/{slug}/
+    if (!pluginSlug) {
+      const allLinks = document.querySelectorAll('a[href*="/plugins/"]');
+      for (const link of allLinks) {
+        const href = link.getAttribute('href') || '';
+        // Match wordpress.org/plugins/{slug}/ but not /plugins/tags/ or /plugins/browse/
+        const match = href.match(/wordpress\.org\/plugins\/([a-z0-9-]+)\/?(?:#|$|\?)/);
+        if (match && !['tags', 'browse', 'developers', 'about'].includes(match[1])) {
+          pluginSlug = match[1];
+          break;
+        }
+      }
+    }
+
+    // Strategy 3: Check the forum topic tags/metadata
+    if (!pluginSlug) {
+      const topicTags = document.querySelectorAll('.bbp-topic-tags a, .topic-tag a');
+      for (const tag of topicTags) {
+        const href = tag.getAttribute('href') || '';
+        const match = href.match(/\/support\/plugin\/([^/]+)/);
+        if (match) {
+          pluginSlug = match[1];
+          break;
+        }
+      }
+    }
+
+    // Strategy 4: Parse from the page URL structure
+    // Some forum URLs include the plugin context: /support/topic/xxx/ but the page
+    // may reference the plugin in the topic-info section
+    if (!pluginSlug) {
+      const topicInfo = document.querySelector('.bbp-topic-forum a, .topic-info a');
+      if (topicInfo) {
+        const href = topicInfo.getAttribute('href') || '';
+        const match = href.match(/\/support\/plugin\/([^/]+)/);
+        if (match) pluginSlug = match[1];
+      }
+    }
+
+    // Strategy 5: Look for any link on the page pointing to /support/plugin/{slug}
+    if (!pluginSlug) {
+      const anyPluginLink = document.querySelector('a[href*="/support/plugin/"]');
+      if (anyPluginLink) {
+        const href = anyPluginLink.getAttribute('href') || '';
+        const match = href.match(/\/support\/plugin\/([^/]+)/);
+        if (match) pluginSlug = match[1];
+      }
+    }
+
+    if (pluginSlug) {
+      return {
+        slug: pluginSlug,
+        reviewUrl: `https://wordpress.org/plugins/${pluginSlug}/#reviews`,
+        pluginUrl: `https://wordpress.org/plugins/${pluginSlug}/`,
+      };
+    }
+
+    return null;
+  }
+
+  // ──────────────────────────────────────────────
   // 7. AI ANALYSIS VIA OPENAI
   // ──────────────────────────────────────────────
 
@@ -745,11 +831,17 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     const confidence = Math.round((aiResult.confidence || 0) * 100);
     const confClass = confidence >= 75 ? 'high' : confidence >= 50 ? 'medium' : 'low';
 
+    // Detect plugin and build review link
+    const pluginInfo = detectPluginReviewLink();
+    const reviewLink = pluginInfo ? pluginInfo.reviewUrl : '[REVIEW_LINK]';
+    const reviewLinkDetected = !!pluginInfo;
+
     const getTemplateText = (key) => {
       let text = TEMPLATES[key].text;
       if (thread.author) {
         text = text.replace('[NAME]', thread.author);
       }
+      text = text.replace('[REVIEW_LINK]', reviewLink);
       return text;
     };
 
@@ -798,6 +890,18 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
             <span class="wrh-stat"><strong>${thread.replies.length}</strong> total posts</span>
             ${thread.threadSpanDays > 0 ? `<span class="wrh-stat"><strong>${thread.threadSpanDays}</strong> day span</span>` : ''}
           </div>
+
+          ${pluginInfo ? `
+            <div style="background: #f0f6fc; border: 1px solid #c8d6e5; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+              <span>🔗</span>
+              <span>Plugin detected: <strong>${pluginInfo.slug}</strong> — review link will be auto-filled in templates</span>
+            </div>
+          ` : `
+            <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+              <span>⚠️</span>
+              <span>Could not detect plugin — <code>[REVIEW_LINK]</code> will remain as placeholder. Replace it manually.</span>
+            </div>
+          `}
 
           ${aiResult.reasoning ? `
             <div class="wrh-label">AI REASONING</div>
