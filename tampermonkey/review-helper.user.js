@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Kingsleyinfo/wporg-review-helper
 // @updateURL    https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
-// @version      2.2.0
+// @version      2.3.0
 // @description  Analyzes WordPress.org support threads using AI and recommends review request templates based on customer sentiment.
 // @author       Kay (Kingsleyinfo)
 // @match        https://wordpress.org/support/topic/*
@@ -72,52 +72,87 @@
 
   const SYSTEM_PROMPT = `You are a sentiment analysis assistant for WordPress.org plugin support threads. Your job is to analyze a support conversation and determine:
 
-1. Whether the customer had a GOOD experience (and should be asked for a plugin review) or NOT a good experience (and should NOT be asked).
+1. Whether the customer had a GOOD, NEUTRAL, or BAD experience.
 2. Which response template (A–F) the support agent should use.
 3. Key signals that led to your determination.
 
 ## Decision Framework
 
-### GOOD EXPERIENCE signals (ask for a review):
-- User explicitly confirmed the fix works (e.g., "that worked," "fixed," "solved," "all good," "working now," "thanks so much")
-- Positive/grateful tone — expressions of thanks, relief, enthusiasm
-- Short thread with a clear resolution
-- User came back after a delay to confirm the solution held up
+Follow this decision tree strictly:
 
-### NOT GOOD EXPERIENCE signals (don't ask):
+### Step 1: Was the issue resolved?
+- NO → sentiment is "bad". Recommend Template E.
+
+### Step 2: Did the user confirm or accept the solution?
+- NO (silence / no response from user — last message is from agent) → sentiment is "bad". Recommend Template E.
+
+### Step 3: What is the user's overall tone?
+- POSITIVE → sentiment is "good". Recommend Templates A–D or F.
+- NEUTRAL → sentiment is "neutral". Recommend Templates B, C, D, or F (softer options). NEVER recommend Template A for neutral.
+- NEGATIVE → sentiment is "bad". Recommend Template E.
+
+## Sentiment Definitions
+
+### GOOD (positive tone):
+- User explicitly confirmed the fix works WITH enthusiasm (e.g., "that worked perfectly!", "amazing, fixed!", "you're the best!", "lifesaver!", "thanks so much, all sorted!")
+- Strong positive/grateful tone — expressions of relief, excitement, gratitude beyond a simple "thanks"
+- Clear resolution with warm closing language
+
+### NEUTRAL (lukewarm tone — grey area):
+- User acknowledged the fix but WITHOUT enthusiasm — phrases like "okay," "thanks," "I'll try that," "seems to work," "alright," "got it," "it's working now"
+- Short confirmations without elaboration (a bare "thanks" or "okay that works")
+- No negative language, but also no strong positive signals
+- User accepted a workaround without expressing excitement or dissatisfaction
+- Functional acknowledgment — they confirmed it works, but the energy is flat
+- IMPORTANT: Neutral is NOT silence. Silence = bad. Neutral means the user responded, but the response is lukewarm.
+
+### BAD (negative tone or unresolved):
 - Issue unresolved (e.g., "still not working," "same issue," "no luck," "giving up")
 - User was frustrated, angry, or disappointed
 - Feature request with no resolution
 - User was redirected elsewhere (hosting, theme dev, GitHub issue, out of scope)
-- Agent only provided documentation links
+- Agent only provided documentation links with no confirmation of resolution
 - User mentioned choosing another plugin or solution
-- Thread ended in silence (last message from agent, no user response) — flag as inconclusive
+- Thread ended in silence (last message from agent, no user response)
 - Long thread with no clear confirmation of resolution
+- Sarcasm or polite frustration (e.g., "thanks anyway, I'll find another plugin")
 
-### Template Selection (when sentiment is GOOD):
-- **A (Quick Resolution)**: Thread is short (≤3 agent replies), user confirmed, positive tone
-- **B (Resolved After Long Thread)**: Thread is longer (4+ agent replies), user confirmed, positive/neutral-positive tone
-- **C (Workaround Accepted)**: Agent offered a workaround (workaround, alternative, temporary fix, snippet, custom CSS, filter) AND user accepted it positively
+## Template Selection
+
+### When sentiment is GOOD:
+- **A (Quick Resolution)**: Thread is short (≤3 agent replies), user confirmed, clearly positive tone
+- **B (Resolved After Long Thread)**: Thread is longer (4+ agent replies), user confirmed, positive tone
+- **C (Workaround Accepted)**: Agent offered a workaround AND user accepted it positively/enthusiastically
 - **D (Resolved After Escalation)**: Thread references GitHub, escalation, developer fix, patch, or update resolving the issue
-- **F (Delayed Follow-Up)**: Thread spans multiple days AND resolved, but could benefit from a check-in first (suggest alongside primary template)
+- **F (Delayed Follow-Up)**: Thread spans multiple days AND resolved — suggest alongside primary template
 
-### When sentiment is NOT GOOD or INCONCLUSIVE:
+### When sentiment is NEUTRAL (grey area):
+- **B (Resolved After Long Thread)**: Long thread, resolved, neutral tone
+- **C (Workaround Accepted)**: Workaround accepted, but not enthusiastically
+- **D (Resolved After Escalation)**: Escalation resolved, user came back with flat confirmation
+- **F (Delayed Follow-Up)**: Solution provided, user confirmed after a delay with lukewarm response
+- NEVER suggest Template A for neutral — it's too upbeat for a lukewarm thread
+- Template E should always be available as a fallback "skip" option (set as secondaryTemplate)
+
+### When sentiment is BAD:
 - Always use **E (Graceful Close)**
 
 ## Important Analysis Notes
 - Pay close attention to the FINAL messages in the thread — they carry the most weight
-- "Thank you" alone doesn't mean the issue is resolved — look for explicit confirmation
-- Sarcasm and polite frustration should be detected (e.g., "thanks anyway, I'll find another plugin")
-- If the user says thanks but the issue clearly isn't fixed, that's NOT a good experience
+- "Thank you" alone (without elaboration) leans NEUTRAL, not positive
+- A bare "thanks" or "okay" after a fix is neutral, not good
+- Sarcasm and polite frustration should be detected as negative
+- If the user says thanks but the issue clearly isn't fixed, that's BAD
 - Consider the full arc of the conversation, not just individual phrases
+- When in doubt between good and neutral, choose NEUTRAL — it's safer to let the HC decide
 
 ## Response Format
 You MUST respond with valid JSON only, no markdown formatting, no code blocks. The response must match this exact structure:
 {
-  "sentiment": "good" | "bad" | "inconclusive",
+  "sentiment": "good" | "neutral" | "bad",
   "confidence": 0.0 to 1.0,
   "primaryTemplate": "A" | "B" | "C" | "D" | "E" | "F",
-  "secondaryTemplate": null | "F",
+  "secondaryTemplate": null | "E" | "F",
   "signals": [
     { "type": "positive" | "negative" | "neutral" | "info", "text": "description of signal" }
   ],
@@ -249,6 +284,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     }
     .wrh-sentiment.good { background: #edfcf2; color: #0a7b3e; border: 1px solid #b8e6cc; }
     .wrh-sentiment.bad { background: #fef2f2; color: #b91c1c; border: 1px solid #f5c6c6; }
+    .wrh-sentiment.neutral { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
     .wrh-sentiment.inconclusive { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
 
     /* Confidence bar */
@@ -352,6 +388,58 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     }
     .wrh-copy-btn:hover { background: #005a87; }
     .wrh-copy-btn.copied { background: #0a7b3e; }
+
+    /* Grey area guidance box */
+    .wrh-grey-guidance {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 18px;
+      font-size: 13px;
+      color: #92400e;
+      line-height: 1.5;
+    }
+    .wrh-grey-guidance strong { display: block; margin-bottom: 4px; font-size: 14px; }
+
+    /* Skip / graceful close fallback card */
+    .wrh-skip-card {
+      background: #f6f7f7;
+      border: 2px dashed #c3c4c7;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-top: 14px;
+    }
+    .wrh-skip-card h3 {
+      margin: 0 0 4px 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #757575;
+    }
+    .wrh-skip-card p {
+      margin: 0;
+      font-size: 12px;
+      color: #757575;
+      line-height: 1.4;
+      font-style: italic;
+    }
+    .wrh-skip-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding: 8px 16px;
+      background: #757575;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .wrh-skip-btn:hover { background: #50575e; }
+    .wrh-skip-btn.copied { background: #0a7b3e; }
 
     /* Stats bar */
     .wrh-stats {
@@ -513,6 +601,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     .wrh-bar-track { flex: 1; height: 18px; background: #e2e4e7; border-radius: 4px; overflow: hidden; }
     .wrh-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
     .wrh-bar-fill.good { background: #0a7b3e; }
+    .wrh-bar-fill.neutral { background: #d97706; }
     .wrh-bar-fill.bad { background: #b91c1c; }
     .wrh-bar-fill.inconclusive { background: #d97706; }
     .wrh-bar-value { width: 36px; font-size: 12px; color: #757575; flex-shrink: 0; }
@@ -767,10 +856,11 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     const log = getAnalyticsLog();
     const total = log.length;
     if (total === 0) {
-      return { total: 0, good: 0, bad: 0, inconclusive: 0, copyRate: 0, templateCounts: {}, pluginCounts: {}, recentEntries: [] };
+      return { total: 0, good: 0, neutral: 0, bad: 0, inconclusive: 0, copyRate: 0, templateCounts: {}, pluginCounts: {}, recentEntries: [] };
     }
 
     const good = log.filter(e => e.sentiment === 'good').length;
+    const neutral = log.filter(e => e.sentiment === 'neutral').length;
     const bad = log.filter(e => e.sentiment === 'bad').length;
     const inconclusive = log.filter(e => e.sentiment === 'inconclusive').length;
     const copied = log.filter(e => e.templateCopied).length;
@@ -799,6 +889,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     return {
       total,
       good,
+      neutral,
       bad,
       inconclusive,
       copyRate: total > 0 ? Math.round((copied / total) * 100) : 0,
@@ -1092,15 +1183,15 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     const overlay = document.createElement('div');
     overlay.id = 'wrh-overlay';
 
-    const sentimentLabel = aiResult.sentiment === 'good'
-      ? '✅ Good Experience — Ask for a Review'
-      : aiResult.sentiment === 'bad'
-        ? '❌ Not a Good Experience — Don\'t Ask'
-        : '⚠️ Inconclusive — Review Manually';
-
-    const sentimentClass = aiResult.sentiment === 'good' ? 'good'
-      : aiResult.sentiment === 'bad' ? 'bad'
-        : 'inconclusive';
+    const sentimentMap = {
+      good:  { label: '✅ Good Experience — Ask for a Review', css: 'good' },
+      neutral: { label: '🤔 Grey Area — Use Your Judgment', css: 'neutral' },
+      bad:   { label: '❌ Not a Good Experience — Don\'t Ask', css: 'bad' },
+      inconclusive: { label: '⚠️ Inconclusive — Review Manually', css: 'inconclusive' },
+    };
+    const sentInfo = sentimentMap[aiResult.sentiment] || sentimentMap.inconclusive;
+    const sentimentLabel = sentInfo.label;
+    const sentimentClass = sentInfo.css;
 
     const signalIcons = { positive: '✅', negative: '❌', neutral: '⚠️', info: 'ℹ️' };
 
@@ -1122,11 +1213,12 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       return text;
     };
 
+    const isNeutral = aiResult.sentiment === 'neutral';
     const pt = aiResult.primaryTemplate || 'E';
     const st = aiResult.secondaryTemplate || null;
 
     let secondaryHTML = '';
-    if (st && TEMPLATES[st]) {
+    if (!isNeutral && st && TEMPLATES[st]) {
       secondaryHTML = `
         <hr class="wrh-divider">
         <div class="wrh-label">ALTERNATIVE TEMPLATE (OPTIONAL)</div>
@@ -1134,6 +1226,32 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           <h3>Template ${st} — ${TEMPLATES[st].name}</h3>
           <p>${TEMPLATES[st].description}</p>
           <button class="wrh-copy-btn" data-template="${st}">📋 Copy Template ${st}</button>
+        </div>
+      `;
+    }
+
+    // For neutral: build the skip (Template E) fallback card
+    let skipFallbackHTML = '';
+    if (isNeutral) {
+      skipFallbackHTML = `
+        <hr class="wrh-divider">
+        <div class="wrh-label">PREFER TO SKIP?</div>
+        <div class="wrh-skip-card">
+          <h3>Template E — ${TEMPLATES.E.name}</h3>
+          <p>Still unsure? Close gracefully instead. No review ask.</p>
+          <button class="wrh-skip-btn wrh-copy-btn" data-template="E">📋 Copy Template E (Skip)</button>
+        </div>
+      `;
+    }
+
+    // For neutral: build the grey area guidance box
+    let greyGuidanceHTML = '';
+    if (isNeutral) {
+      greyGuidanceHTML = `
+        <div class="wrh-grey-guidance">
+          <strong>🤔 This one's your call</strong>
+          A solution was provided and accepted, but the tone is lukewarm — not clearly positive or negative.
+          Lean toward asking with a softer template below. If something still feels off, skip it and close gracefully.
         </div>
       `;
     }
@@ -1180,6 +1298,8 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
             </div>
           `}
 
+          ${greyGuidanceHTML}
+
           ${aiResult.reasoning ? `
             <div class="wrh-label">AI REASONING</div>
             <div class="wrh-reasoning">${aiResult.reasoning}</div>
@@ -1192,7 +1312,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
 
           <hr class="wrh-divider">
 
-          <div class="wrh-label">RECOMMENDED TEMPLATE</div>
+          <div class="wrh-label">${isNeutral ? 'SUGGESTED SOFTER TEMPLATE' : 'RECOMMENDED TEMPLATE'}</div>
           <div class="wrh-template-card">
             <h3>Template ${pt} — ${TEMPLATES[pt] ? TEMPLATES[pt].name : 'Unknown'}</h3>
             <p>${TEMPLATES[pt] ? TEMPLATES[pt].description : ''}</p>
@@ -1200,6 +1320,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           </div>
 
           ${secondaryHTML}
+          ${skipFallbackHTML}
 
           <div class="wrh-powered-by">
             Powered by OpenAI GPT-4o Mini · Analysis runs on-demand only
@@ -1275,7 +1396,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     overlay.id = 'wrh-overlay';
 
     // Build sentiment bar chart
-    const maxBar = Math.max(stats.good, stats.bad, stats.inconclusive, 1);
+    const maxBar = Math.max(stats.good, stats.neutral, stats.bad, stats.inconclusive, 1);
     const barHTML = (label, count, cls) => `
       <div class="wrh-bar-row">
         <span class="wrh-bar-label">${label}</span>
@@ -1306,7 +1427,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       const date = new Date(e.timestamp);
       const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      const sentimentEmoji = e.sentiment === 'good' ? '✅' : e.sentiment === 'bad' ? '❌' : '⚠️';
+      const sentimentEmoji = e.sentiment === 'good' ? '✅' : e.sentiment === 'neutral' ? '🤔' : e.sentiment === 'bad' ? '❌' : '⚠️';
       const copyEmoji = e.templateCopied ? '📋' : '—';
       // Extract thread slug from URL for display
       const urlParts = e.threadUrl.split('/');
@@ -1354,8 +1475,9 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
 
             <div class="wrh-label">SENTIMENT BREAKDOWN</div>
             ${barHTML('Good ✅', stats.good, 'good')}
+            ${barHTML('Grey Area 🤔', stats.neutral, 'inconclusive')}
             ${barHTML('Bad ❌', stats.bad, 'bad')}
-            ${barHTML('Inconclusive ⚠️', stats.inconclusive, 'inconclusive')}
+            ${stats.inconclusive > 0 ? barHTML('Inconclusive ⚠️', stats.inconclusive, 'inconclusive') : ''}
 
             <hr class="wrh-divider">
 

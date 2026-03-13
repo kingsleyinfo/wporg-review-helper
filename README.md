@@ -9,21 +9,33 @@ Built for Happiness Engineers working WooCommerce (and other plugin) support on 
 When you click the **"📊 Analyze Thread"** button on any WordPress.org support topic page, the script:
 
 1. **Parses the thread** — identifies the original poster vs. support agents, counts replies, measures thread duration
-2. **Sends the conversation to GPT-4o Mini** — along with a detailed decision framework covering positive signals, negative signals, and template selection criteria
-3. **Displays the AI's assessment** — sentiment (good/bad/inconclusive), confidence score, reasoning, detected signals, and the recommended template
+2. **Sends the conversation to GPT-4o Mini** — along with a detailed decision framework covering positive, neutral, and negative signals
+3. **Displays the AI's assessment** — sentiment (good/neutral/bad), confidence score, reasoning, detected signals, and the recommended template
 4. **Lets you copy the template** — one click copies the recommended text to your clipboard, ready to paste
 
 Thread content is sent to OpenAI's API for analysis. Your API key is stored locally in Tampermonkey. Analytics data (no PII) is stored locally for your own tracking.
+
+## Decision Framework
+
+The script evaluates threads through three possible outcomes:
+
+| Sentiment | Label | What it means | Templates shown |
+|---|---|---|---|
+| **Good** | ✅ Ask for a Review | User confirmed fix with positive/enthusiastic tone | A, B, C, D, F |
+| **Neutral** | 🤔 Grey Area — Use Your Judgment | Solution accepted but tone is lukewarm — HC decides | B, C, D, F (+ E as skip) |
+| **Bad** | ❌ Don't Ask | Issue unresolved, user frustrated, or silence | E only |
+
+When the AI detects a **grey area**, it leans toward suggesting a softer template but gives the HC an explicit "skip" option (Template E) if something still feels off.
 
 ## Templates
 
 | Template | When to Use |
 |---|---|
-| **A — Quick Resolution** | Short thread, user confirmed fix, positive tone |
-| **B — Resolved After Long Thread** | Longer thread, user confirmed, positive/neutral tone |
-| **C — Workaround Accepted** | Agent offered a workaround, user accepted positively |
+| **A — Quick Resolution** | Short thread, user confirmed fix, clearly positive tone (not used for grey area) |
+| **B — Resolved After Long Thread** | Longer thread, user confirmed, positive or neutral tone |
+| **C — Workaround Accepted** | Agent offered a workaround, user accepted positively or neutrally |
 | **D — Resolved After Escalation** | Issue resolved via GitHub/patch/update |
-| **E — Graceful Close** | Not a good experience — close without asking for review |
+| **E — Graceful Close** | Not a good experience — close without asking for review (also used as "skip" for grey area) |
 | **F — Delayed Follow-Up** | Multi-day thread resolved — check in before asking |
 
 ## Installation
@@ -54,7 +66,7 @@ If you're viewing this on GitHub, you can click the raw link for the `.user.js` 
 2. Click the **"📊 Analyze Thread"** button (bottom-right corner)
 3. Wait a few seconds for the AI analysis
 4. Review the results panel:
-   - **Sentiment result** — Good ✅, Bad ❌, or Inconclusive ⚠️
+   - **Sentiment result** — Good ✅, Grey Area 🤔, or Bad ❌
    - **Confidence score** — how certain the AI is about its assessment
    - **AI reasoning** — a one-line explanation of why it reached this conclusion
    - **Signals detected** — specific things the AI noticed in the conversation
@@ -120,6 +132,7 @@ wporg-review-helper/
 - [x] Secure API key management
 - [x] Auto-detect plugin review link from forum page
 - [x] Local analytics dashboard with CSV export
+- [x] Grey area / neutral sentiment detection with HC judgment path
 
 ### Phase 2: Chrome Extension (Planned)
 - [ ] Sidebar panel instead of overlay
