@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Kingsleyinfo/wporg-review-helper
 // @updateURL    https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
-// @version      2.1.0
+// @version      2.2.0
 // @description  Analyzes WordPress.org support threads using AI and recommends review request templates based on customer sentiment.
 // @author       Kay (Kingsleyinfo)
 // @match        https://wordpress.org/support/topic/*
@@ -26,6 +26,8 @@
 
   const OPENAI_MODEL = 'gpt-4o-mini';
   const API_KEY_STORAGE = 'wrh_openai_api_key';
+  const ANALYTICS_STORAGE = 'wrh_analytics_log';
+  const ANALYTICS_MAX_ENTRIES = 1000;
 
   // ──────────────────────────────────────────────
   // 2. TEMPLATES
@@ -157,7 +159,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     #wrh-settings-fab {
       position: fixed;
       bottom: 24px;
-      right: 210px;
+      right: 350px;
       z-index: 99999;
       background: #50575e;
       color: #fff;
@@ -444,6 +446,135 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       line-height: 1.5;
     }
     .wrh-error strong { display: block; margin-bottom: 4px; }
+
+    /* Stats FAB button */
+    #wrh-stats-fab {
+      position: fixed;
+      bottom: 24px;
+      right: 290px;
+      z-index: 99999;
+      background: #50575e;
+      color: #fff;
+      border: none;
+      border-radius: 50px;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      transition: background 0.2s, transform 0.15s;
+    }
+    #wrh-stats-fab:hover {
+      background: #0073aa;
+      transform: translateY(-2px);
+    }
+
+    /* Stats dashboard */
+    .wrh-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .wrh-stats-card {
+      background: #f6f7f7;
+      border: 1px solid #e2e4e7;
+      border-radius: 8px;
+      padding: 14px;
+      text-align: center;
+    }
+    .wrh-stats-card .wrh-stats-number {
+      font-size: 26px;
+      font-weight: 700;
+      color: #1e1e1e;
+      line-height: 1.2;
+    }
+    .wrh-stats-card .wrh-stats-desc {
+      font-size: 11px;
+      color: #757575;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      margin-top: 4px;
+    }
+    .wrh-stats-card.good .wrh-stats-number { color: #0a7b3e; }
+    .wrh-stats-card.bad .wrh-stats-number { color: #b91c1c; }
+    .wrh-stats-card.warn .wrh-stats-number { color: #92400e; }
+    .wrh-stats-card.info .wrh-stats-number { color: #0073aa; }
+
+    /* Sentiment bar chart */
+    .wrh-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .wrh-bar-label { width: 90px; text-align: right; color: #3c434a; flex-shrink: 0; }
+    .wrh-bar-track { flex: 1; height: 18px; background: #e2e4e7; border-radius: 4px; overflow: hidden; }
+    .wrh-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+    .wrh-bar-fill.good { background: #0a7b3e; }
+    .wrh-bar-fill.bad { background: #b91c1c; }
+    .wrh-bar-fill.inconclusive { background: #d97706; }
+    .wrh-bar-value { width: 36px; font-size: 12px; color: #757575; flex-shrink: 0; }
+
+    /* Stats log table */
+    .wrh-log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+    .wrh-log-table th {
+      text-align: left;
+      padding: 6px 8px;
+      border-bottom: 2px solid #e2e4e7;
+      font-weight: 600;
+      color: #757575;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .wrh-log-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #f0f0f0;
+      color: #3c434a;
+      vertical-align: top;
+    }
+    .wrh-log-table tr:hover td { background: #f6f7f7; }
+    .wrh-log-table a { color: #0073aa; text-decoration: none; }
+    .wrh-log-table a:hover { text-decoration: underline; }
+    .wrh-log-scroll {
+      max-height: 280px;
+      overflow-y: auto;
+      border: 1px solid #e2e4e7;
+      border-radius: 8px;
+    }
+
+    /* Stats action buttons */
+    .wrh-stats-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .wrh-stats-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border: 1px solid #c3c4c7;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      background: #fff;
+      color: #1e1e1e;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .wrh-stats-btn:hover { background: #f0f0f0; border-color: #8c8f94; }
+    .wrh-stats-btn.primary { background: #0073aa; color: #fff; border-color: #0073aa; }
+    .wrh-stats-btn.primary:hover { background: #005a87; }
+    .wrh-stats-btn.danger { color: #b91c1c; border-color: #f5c6c6; }
+    .wrh-stats-btn.danger:hover { background: #fef2f2; }
   `);
 
   // ──────────────────────────────────────────────
@@ -528,8 +659,154 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     document.addEventListener('keydown', escHandler);
   }
 
-  // Register Tampermonkey menu command
+  // Register Tampermonkey menu commands
   GM_registerMenuCommand('⚙️ Set OpenAI API Key', showSettingsDialog);
+  GM_registerMenuCommand('📈 View Analytics Dashboard', () => {
+    // Defer to ensure DOM is ready
+    if (typeof renderStatsDashboard === 'function') renderStatsDashboard();
+  });
+
+  // ──────────────────────────────────────────────
+  // 5b. ANALYTICS TRACKING (LOCAL)
+  // ──────────────────────────────────────────────
+
+  /**
+   * Gets the analytics log from Tampermonkey storage.
+   * Returns an array of log entry objects.
+   */
+  function getAnalyticsLog() {
+    try {
+      const raw = GM_getValue(ANALYTICS_STORAGE, '[]');
+      return JSON.parse(raw);
+    } catch (e) {
+      console.error('WRH Analytics: Failed to parse log', e);
+      return [];
+    }
+  }
+
+  /**
+   * Saves the analytics log to Tampermonkey storage.
+   */
+  function saveAnalyticsLog(log) {
+    GM_setValue(ANALYTICS_STORAGE, JSON.stringify(log));
+  }
+
+  /**
+   * Adds a new entry to the analytics log.
+   * Caps at ANALYTICS_MAX_ENTRIES by removing oldest entries.
+   * Returns the entry's ID (index) so it can be updated later (e.g., when template is copied).
+   */
+  function addLogEntry(entry) {
+    const log = getAnalyticsLog();
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const logEntry = {
+      id,
+      timestamp: new Date().toISOString(),
+      threadUrl: window.location.href,
+      pluginSlug: entry.pluginSlug || null,
+      sentiment: entry.sentiment || 'unknown',
+      confidence: entry.confidence || 0,
+      recommendedTemplate: entry.recommendedTemplate || null,
+      templateCopied: false,
+      templateCopiedKey: null,
+    };
+    log.push(logEntry);
+
+    // Cap at max entries — remove oldest
+    while (log.length > ANALYTICS_MAX_ENTRIES) {
+      log.shift();
+    }
+
+    saveAnalyticsLog(log);
+    return id;
+  }
+
+  /**
+   * Updates an existing log entry (e.g., to mark template as copied).
+   */
+  function updateLogEntry(id, updates) {
+    const log = getAnalyticsLog();
+    const idx = log.findIndex(e => e.id === id);
+    if (idx !== -1) {
+      Object.assign(log[idx], updates);
+      saveAnalyticsLog(log);
+    }
+  }
+
+  /**
+   * Clears the entire analytics log.
+   */
+  function clearAnalyticsLog() {
+    saveAnalyticsLog([]);
+  }
+
+  /**
+   * Exports the analytics log as a CSV string.
+   */
+  function exportAnalyticsCSV() {
+    const log = getAnalyticsLog();
+    const headers = ['Timestamp', 'Thread URL', 'Plugin Slug', 'Sentiment', 'Confidence', 'Recommended Template', 'Template Copied', 'Template Copied Key'];
+    const rows = log.map(e => [
+      e.timestamp,
+      e.threadUrl,
+      e.pluginSlug || '',
+      e.sentiment,
+      Math.round((e.confidence || 0) * 100) + '%',
+      e.recommendedTemplate || '',
+      e.templateCopied ? 'Yes' : 'No',
+      e.templateCopiedKey || '',
+    ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+
+    return [headers.join(','), ...rows].join('\n');
+  }
+
+  /**
+   * Computes summary statistics from the analytics log.
+   */
+  function computeAnalyticsStats() {
+    const log = getAnalyticsLog();
+    const total = log.length;
+    if (total === 0) {
+      return { total: 0, good: 0, bad: 0, inconclusive: 0, copyRate: 0, templateCounts: {}, pluginCounts: {}, recentEntries: [] };
+    }
+
+    const good = log.filter(e => e.sentiment === 'good').length;
+    const bad = log.filter(e => e.sentiment === 'bad').length;
+    const inconclusive = log.filter(e => e.sentiment === 'inconclusive').length;
+    const copied = log.filter(e => e.templateCopied).length;
+
+    // Template recommendation counts
+    const templateCounts = {};
+    log.forEach(e => {
+      if (e.recommendedTemplate) {
+        templateCounts[e.recommendedTemplate] = (templateCounts[e.recommendedTemplate] || 0) + 1;
+      }
+    });
+
+    // Plugin analysis counts
+    const pluginCounts = {};
+    log.forEach(e => {
+      if (e.pluginSlug) {
+        pluginCounts[e.pluginSlug] = (pluginCounts[e.pluginSlug] || 0) + 1;
+      }
+    });
+
+    // Sort plugins by count descending
+    const sortedPlugins = Object.entries(pluginCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+
+    return {
+      total,
+      good,
+      bad,
+      inconclusive,
+      copyRate: total > 0 ? Math.round((copied / total) * 100) : 0,
+      templateCounts,
+      pluginCounts: Object.fromEntries(sortedPlugins),
+      recentEntries: log.slice(-50).reverse(),
+    };
+  }
 
   // ──────────────────────────────────────────────
   // 6. THREAD PARSING
@@ -808,7 +1085,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
   // 8. UI RENDERING
   // ──────────────────────────────────────────────
 
-  function renderPanel(aiResult, thread) {
+  function renderPanel(aiResult, thread, logEntryId) {
     const existing = document.getElementById('wrh-overlay');
     if (existing) existing.remove();
 
@@ -970,6 +1247,11 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           ta.remove();
         }
 
+        // Log template copy in analytics
+        if (logEntryId) {
+          updateLogEntry(logEntryId, { templateCopied: true, templateCopiedKey: key });
+        }
+
         btn.textContent = '✅ Copied!';
         btn.classList.add('copied');
         setTimeout(() => {
@@ -977,6 +1259,191 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           btn.classList.remove('copied');
         }, 2000);
       });
+    });
+  }
+
+  // ──────────────────────────────────────────────
+  // 8b. STATS DASHBOARD
+  // ──────────────────────────────────────────────
+
+  function renderStatsDashboard() {
+    const existing = document.getElementById('wrh-overlay');
+    if (existing) existing.remove();
+
+    const stats = computeAnalyticsStats();
+    const overlay = document.createElement('div');
+    overlay.id = 'wrh-overlay';
+
+    // Build sentiment bar chart
+    const maxBar = Math.max(stats.good, stats.bad, stats.inconclusive, 1);
+    const barHTML = (label, count, cls) => `
+      <div class="wrh-bar-row">
+        <span class="wrh-bar-label">${label}</span>
+        <div class="wrh-bar-track">
+          <div class="wrh-bar-fill ${cls}" style="width: ${Math.round((count / maxBar) * 100)}%;"></div>
+        </div>
+        <span class="wrh-bar-value">${count}</span>
+      </div>
+    `;
+
+    // Build template breakdown
+    const templateKeys = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const templateBreakdownHTML = templateKeys.map(k => {
+      const count = stats.templateCounts[k] || 0;
+      return count > 0 ? `<span class="wrh-stat"><strong>${count}×</strong> Template ${k}</span>` : '';
+    }).filter(Boolean).join('') || '<span class="wrh-stat" style="color: #a0a5aa;">No data yet</span>';
+
+    // Build top plugins
+    const pluginEntries = Object.entries(stats.pluginCounts);
+    const topPluginsHTML = pluginEntries.length > 0
+      ? pluginEntries.map(([slug, count]) =>
+          `<span class="wrh-stat"><strong>${count}×</strong> ${slug}</span>`
+        ).join('')
+      : '<span class="wrh-stat" style="color: #a0a5aa;">No plugins detected yet</span>';
+
+    // Build log table rows
+    const logRows = stats.recentEntries.map(e => {
+      const date = new Date(e.timestamp);
+      const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      const sentimentEmoji = e.sentiment === 'good' ? '✅' : e.sentiment === 'bad' ? '❌' : '⚠️';
+      const copyEmoji = e.templateCopied ? '📋' : '—';
+      // Extract thread slug from URL for display
+      const urlParts = e.threadUrl.split('/');
+      const threadSlug = urlParts[urlParts.length - 2] || urlParts[urlParts.length - 1] || 'thread';
+      const shortSlug = threadSlug.length > 30 ? threadSlug.slice(0, 27) + '...' : threadSlug;
+
+      return `<tr>
+        <td>${dateStr}<br><span style="color: #a0a5aa; font-size: 11px;">${timeStr}</span></td>
+        <td><a href="${e.threadUrl}" target="_blank" title="${threadSlug}">${shortSlug}</a></td>
+        <td>${e.pluginSlug || '—'}</td>
+        <td>${sentimentEmoji}</td>
+        <td>${e.recommendedTemplate || '—'}</td>
+        <td>${copyEmoji} ${e.templateCopiedKey || ''}</td>
+      </tr>`;
+    }).join('');
+
+    overlay.innerHTML = `
+      <div id="wrh-panel" style="width: 640px;">
+        <div id="wrh-panel-header">
+          <h2>📈 Analytics Dashboard</h2>
+          <button id="wrh-close-btn" title="Close">&times;</button>
+        </div>
+        <div id="wrh-panel-body">
+          ${stats.total === 0 ? `
+            <div style="text-align: center; padding: 40px 20px; color: #757575;">
+              <div style="font-size: 40px; margin-bottom: 12px;">📊</div>
+              <p style="font-size: 15px; margin: 0 0 8px;">No analyses logged yet</p>
+              <p style="font-size: 13px; margin: 0;">Click <strong>📊 Analyze Thread</strong> on a support topic to get started.</p>
+            </div>
+          ` : `
+            <div class="wrh-stats-grid">
+              <div class="wrh-stats-card info">
+                <div class="wrh-stats-number">${stats.total}</div>
+                <div class="wrh-stats-desc">Threads Analyzed</div>
+              </div>
+              <div class="wrh-stats-card good">
+                <div class="wrh-stats-number">${stats.copyRate}%</div>
+                <div class="wrh-stats-desc">Template Copy Rate</div>
+              </div>
+              <div class="wrh-stats-card good">
+                <div class="wrh-stats-number">${stats.good}</div>
+                <div class="wrh-stats-desc">Good Sentiment</div>
+              </div>
+            </div>
+
+            <div class="wrh-label">SENTIMENT BREAKDOWN</div>
+            ${barHTML('Good ✅', stats.good, 'good')}
+            ${barHTML('Bad ❌', stats.bad, 'bad')}
+            ${barHTML('Inconclusive ⚠️', stats.inconclusive, 'inconclusive')}
+
+            <hr class="wrh-divider">
+
+            <div class="wrh-label">MOST RECOMMENDED TEMPLATES</div>
+            <div class="wrh-stats" style="margin-bottom: 18px;">
+              ${templateBreakdownHTML}
+            </div>
+
+            <div class="wrh-label">TOP ANALYZED PLUGINS</div>
+            <div class="wrh-stats" style="margin-bottom: 18px; flex-wrap: wrap;">
+              ${topPluginsHTML}
+            </div>
+
+            <hr class="wrh-divider">
+
+            <div class="wrh-label">RECENT ANALYSES (last 50)</div>
+            <div class="wrh-log-scroll">
+              <table class="wrh-log-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Thread</th>
+                    <th>Plugin</th>
+                    <th>Result</th>
+                    <th>Template</th>
+                    <th>Copied</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${logRows || '<tr><td colspan="6" style="text-align: center; color: #a0a5aa;">No entries</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          `}
+
+          <div class="wrh-stats-actions">
+            <button class="wrh-stats-btn primary" id="wrh-export-csv">📥 Export CSV</button>
+            <button class="wrh-stats-btn danger" id="wrh-clear-log">🗑️ Clear All Data</button>
+          </div>
+
+          <div class="wrh-powered-by">
+            Analytics stored locally in Tampermonkey · No data sent externally · Max ${ANALYTICS_MAX_ENTRIES} entries
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    // Event listeners
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    overlay.querySelector('#wrh-close-btn').addEventListener('click', () => overlay.remove());
+
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+
+    // Export CSV
+    overlay.querySelector('#wrh-export-csv').addEventListener('click', () => {
+      const csv = exportAnalyticsCSV();
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `wrh-analytics-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      const btn = overlay.querySelector('#wrh-export-csv');
+      btn.textContent = '✅ Exported!';
+      setTimeout(() => { btn.textContent = '📥 Export CSV'; }, 2000);
+    });
+
+    // Clear data
+    overlay.querySelector('#wrh-clear-log').addEventListener('click', () => {
+      if (confirm('Are you sure you want to clear all analytics data? This cannot be undone.')) {
+        clearAnalyticsLog();
+        renderStatsDashboard(); // Re-render with empty state
+      }
     });
   }
 
@@ -1022,6 +1489,14 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     fab.title = 'Analyze this support thread for review request readiness';
     document.body.appendChild(fab);
 
+    // Stats button
+    const statsBtn = document.createElement('button');
+    statsBtn.id = 'wrh-stats-fab';
+    statsBtn.innerHTML = '📈';
+    statsBtn.title = 'View Analytics Dashboard';
+    document.body.appendChild(statsBtn);
+    statsBtn.addEventListener('click', renderStatsDashboard);
+
     // Settings button
     const settingsBtn = document.createElement('button');
     settingsBtn.id = 'wrh-settings-fab';
@@ -1059,8 +1534,17 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
         // 3. Call OpenAI
         const aiResult = await callOpenAI(threadText);
 
-        // 4. Render results
-        renderPanel(aiResult, thread);
+        // 4. Log analytics (no PII — just URL, plugin, sentiment, template)
+        const pluginInfo = detectPluginReviewLink();
+        const logEntryId = addLogEntry({
+          pluginSlug: pluginInfo ? pluginInfo.slug : null,
+          sentiment: aiResult.sentiment,
+          confidence: aiResult.confidence,
+          recommendedTemplate: aiResult.primaryTemplate,
+        });
+
+        // 5. Render results (pass logEntryId so copy buttons can update it)
+        renderPanel(aiResult, thread, logEntryId);
 
       } catch (err) {
         console.error('WPorg Review Helper Error:', err);

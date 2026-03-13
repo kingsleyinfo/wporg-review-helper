@@ -13,7 +13,7 @@ When you click the **"📊 Analyze Thread"** button on any WordPress.org support
 3. **Displays the AI's assessment** — sentiment (good/bad/inconclusive), confidence score, reasoning, detected signals, and the recommended template
 4. **Lets you copy the template** — one click copies the recommended text to your clipboard, ready to paste
 
-Thread content is sent to OpenAI's API for analysis. No data is stored or logged beyond the API call. Your API key is stored locally in Tampermonkey.
+Thread content is sent to OpenAI's API for analysis. Your API key is stored locally in Tampermonkey. Analytics data (no PII) is stored locally for your own tracking.
 
 ## Templates
 
@@ -60,7 +60,30 @@ If you're viewing this on GitHub, you can click the raw link for the `.user.js` 
    - **Signals detected** — specific things the AI noticed in the conversation
    - **Recommended template** — with a copy button
 5. Click **"📋 Copy Template"** to copy the text to your clipboard
-6. Paste into the reply box, replace `[REVIEW_LINK]` with the plugin's review URL, and send
+6. Paste into the reply box, replace `[REVIEW_LINK]` with the plugin's review URL (auto-detected when possible), and send
+7. Click the **"📈"** button (bottom-right) anytime to view your analytics dashboard
+
+## Analytics Dashboard
+
+The built-in analytics dashboard tracks your usage locally — no data is sent anywhere.
+
+**What's tracked (no PII):**
+- Thread URL, plugin slug, sentiment result, confidence score
+- Which template was recommended and whether you copied it
+- Timestamp of each analysis
+
+**What's NOT tracked:**
+- No usernames, display names, or user slugs
+- No thread content or messages
+- No IP addresses, browser fingerprints, or HC identity
+
+**Dashboard features:**
+- Summary stats: total threads analyzed, sentiment breakdown, template copy rate
+- Bar chart of sentiment distribution
+- Most recommended templates and most analyzed plugins
+- Scrollable log of recent analyses with clickable thread links
+- CSV export for external analysis
+- Data cap of 1,000 entries (oldest entries rotate out)
 
 ## Cost
 
@@ -70,7 +93,8 @@ The script uses GPT-4o Mini, which costs roughly **$0.00015 per thread analysis*
 
 - Your OpenAI API key is stored locally in Tampermonkey's storage — it never leaves your browser except in API calls to OpenAI
 - Thread content is sent to OpenAI for analysis — these are public forum threads
-- No data is stored, logged, or sent anywhere else
+- Analytics data (thread URLs, plugin slugs, sentiment scores) is stored locally in Tampermonkey — never sent anywhere
+- No PII is ever collected or stored (no usernames, no thread content, no browser fingerprints)
 - The script only runs on `wordpress.org/support/topic/*` pages
 
 ## Project Structure
@@ -94,12 +118,13 @@ wporg-review-helper/
 - [x] Copy-to-clipboard functionality
 - [x] Clean overlay UI with AI reasoning display
 - [x] Secure API key management
+- [x] Auto-detect plugin review link from forum page
+- [x] Local analytics dashboard with CSV export
 
 ### Phase 2: Chrome Extension (Planned)
 - [ ] Sidebar panel instead of overlay
 - [ ] Template customization in extension settings
-- [ ] Auto-detect review link based on which plugin forum you're in
-- [ ] History/tracking of review requests
+- [ ] Team/shared analytics — centralized data for managers
 - [ ] Team sharing — export/import template packs
 
 ## Contributing
