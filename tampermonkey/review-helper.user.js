@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Kingsleyinfo/wporg-review-helper
 // @updateURL    https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
-// @version      2.3.0
+// @version      2.4.0
 // @description  Analyzes WordPress.org support threads using AI and recommends review request templates based on customer sentiment.
 // @author       Kay (Kingsleyinfo)
 // @match        https://wordpress.org/support/topic/*
@@ -13,7 +13,7 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
-// @connect      api.openai.com
+// @connect      api.groq.com
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -24,8 +24,8 @@
   // 1. CONFIGURATION
   // ──────────────────────────────────────────────
 
-  const OPENAI_MODEL = 'gpt-4o-mini';
-  const API_KEY_STORAGE = 'wrh_openai_api_key';
+  const GROQ_MODEL = 'llama-3.1-8b-instant';
+  const API_KEY_STORAGE = 'wrh_groq_api_key';
   const ANALYTICS_STORAGE = 'wrh_analytics_log';
   const ANALYTICS_MAX_ENTRIES = 1000;
 
@@ -697,11 +697,11 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           <button id="wrh-close-btn" title="Close">&times;</button>
         </div>
         <div class="wrh-settings-body">
-          <label for="wrh-api-key">OpenAI API Key</label>
-          <input type="password" id="wrh-api-key" placeholder="sk-..." value="${currentKey}" />
+          <label for="wrh-api-key">Groq API Key</label>
+          <input type="password" id="wrh-api-key" placeholder="gsk_..." value="${currentKey}" />
           <div class="wrh-hint">
-            Your key is stored locally in Tampermonkey and never sent anywhere except OpenAI's API.
-            Get one at <a href="https://platform.openai.com/api-keys" target="_blank" style="color: #0073aa;">platform.openai.com/api-keys</a>
+            Your key is stored locally in Tampermonkey and never sent anywhere except Groq's API.
+            Get a free key at <a href="https://console.groq.com/keys" target="_blank" style="color: #0073aa;">console.groq.com/keys</a>
           </div>
           ${currentKey ? `<div class="wrh-hint" style="margin-top: 8px;">Current key: <code>${maskedKey}</code></div>` : ''}
           <button class="wrh-save-btn" id="wrh-save-key">💾 Save Key</button>
@@ -723,8 +723,8 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
         alert('Please enter a valid API key.');
         return;
       }
-      if (!key.startsWith('sk-')) {
-        alert('OpenAI API keys start with "sk-". Please check your key.');
+      if (!key.startsWith('gsk_')) {
+        alert('Groq API keys start with "gsk_". Please check your key.');
         return;
       }
       setApiKey(key);
@@ -749,7 +749,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
   }
 
   // Register Tampermonkey menu commands
-  GM_registerMenuCommand('⚙️ Set OpenAI API Key', showSettingsDialog);
+  GM_registerMenuCommand('⚙️ Set Groq API Key', showSettingsDialog);
   GM_registerMenuCommand('📈 View Analytics Dashboard', () => {
     // Defer to ensure DOM is ready
     if (typeof renderStatsDashboard === 'function') renderStatsDashboard();
@@ -1083,7 +1083,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
   }
 
   // ──────────────────────────────────────────────
-  // 7. AI ANALYSIS VIA OPENAI
+  // 7. AI ANALYSIS VIA GROQ
   // ──────────────────────────────────────────────
 
   /**
@@ -1115,22 +1115,23 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
   }
 
   /**
-   * Calls OpenAI API with the thread data.
+   * Calls Groq API with the thread data.
+   * Groq uses an OpenAI-compatible API format.
    * Returns a promise that resolves with the parsed AI response.
    */
-  function callOpenAI(threadText) {
+  function callGroq(threadText) {
     const apiKey = getApiKey();
 
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: 'POST',
-        url: 'https://api.openai.com/v1/chat/completions',
+        url: 'https://api.groq.com/openai/v1/chat/completions',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`,
         },
         data: JSON.stringify({
-          model: OPENAI_MODEL,
+          model: GROQ_MODEL,
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: `Please analyze this WordPress.org support thread and provide your assessment:\n\n${threadText}` },
@@ -1143,7 +1144,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
             const data = JSON.parse(response.responseText);
 
             if (data.error) {
-              reject(new Error(data.error.message || 'OpenAI API error'));
+              reject(new Error(data.error.message || 'Groq API error'));
               return;
             }
 
@@ -1162,10 +1163,10 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           }
         },
         onerror: function (err) {
-          reject(new Error('Network error calling OpenAI API. Check your connection.'));
+          reject(new Error('Network error calling Groq API. Check your connection.'));
         },
         ontimeout: function () {
-          reject(new Error('OpenAI API request timed out. Try again.'));
+          reject(new Error('Groq API request timed out. Try again.'));
         },
         timeout: 30000,
       });
@@ -1323,7 +1324,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           ${skipFallbackHTML}
 
           <div class="wrh-powered-by">
-            Powered by OpenAI GPT-4o Mini · Analysis runs on-demand only
+            Powered by Groq (Llama 3.1) · Analysis runs on-demand only
           </div>
         </div>
       </div>
@@ -1653,8 +1654,8 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
         // 2. Format thread for AI
         const threadText = formatThreadForAI(thread);
 
-        // 3. Call OpenAI
-        const aiResult = await callOpenAI(threadText);
+        // 3. Call Groq AI
+        const aiResult = await callGroq(threadText);
 
         // 4. Log analytics (no PII — just URL, plugin, sentiment, template)
         const pluginInfo = detectPluginReviewLink();
@@ -1675,9 +1676,9 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
         if (errorMsg.includes('Incorrect API key')) {
           errorMsg = 'Invalid API key. Click the ⚙️ button to update your key.';
         } else if (errorMsg.includes('quota')) {
-          errorMsg = 'OpenAI API quota exceeded. Check your billing at platform.openai.com.';
+          errorMsg = 'Groq API quota exceeded. Check your usage at console.groq.com.';
         } else if (errorMsg.includes('rate limit')) {
-          errorMsg = 'Rate limited by OpenAI. Wait a moment and try again.';
+          errorMsg = 'Rate limited by Groq. Wait a moment and try again.';
         }
 
         renderError(errorMsg);

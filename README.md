@@ -9,11 +9,11 @@ Built for Happiness Engineers working WooCommerce (and other plugin) support on 
 When you click the **"📊 Analyze Thread"** button on any WordPress.org support topic page, the script:
 
 1. **Parses the thread** — identifies the original poster vs. support agents, counts replies, measures thread duration
-2. **Sends the conversation to GPT-4o Mini** — along with a detailed decision framework covering positive, neutral, and negative signals
+2. **Sends the conversation to Groq AI (Llama 3.1)** — along with a detailed decision framework covering positive, neutral, and negative signals
 3. **Displays the AI's assessment** — sentiment (good/neutral/bad), confidence score, reasoning, detected signals, and the recommended template
 4. **Lets you copy the template** — one click copies the recommended text to your clipboard, ready to paste
 
-Thread content is sent to OpenAI's API for analysis. Your API key is stored locally in Tampermonkey. Analytics data (no PII) is stored locally for your own tracking.
+Thread content is sent to Groq's API for analysis. Your API key is stored locally in Tampermonkey. Analytics data (no PII) is stored locally for your own tracking.
 
 ## Decision Framework
 
@@ -43,7 +43,7 @@ When the AI detects a **grey area**, it leans toward suggesting a softer templat
 ### Prerequisites
 
 - [Tampermonkey](https://www.tampermonkey.net/) browser extension installed in Chrome, Firefox, Edge, or Safari
-- An OpenAI API key ([get one here](https://platform.openai.com/api-keys))
+- A free Groq API key ([get one here](https://console.groq.com/keys) — no credit card required)
 
 ### Steps
 
@@ -53,7 +53,7 @@ When the AI detects a **grey area**, it leans toward suggesting a softer templat
 4. Copy the entire contents of [`tampermonkey/review-helper.user.js`](tampermonkey/review-helper.user.js) and paste it into the editor
 5. Press **Ctrl+S** (or Cmd+S) to save
 6. Navigate to any WordPress.org support topic — you'll see the **"📊 Analyze Thread"** button in the bottom-right corner
-7. Click the **⚙️** button (or click Analyze — it'll prompt you) to enter your OpenAI API key
+7. Click the **⚙️** button (or click Analyze — it'll prompt you) to enter your Groq API key
 8. You're ready to go!
 
 ### Alternative: Direct Install
@@ -99,12 +99,12 @@ The built-in analytics dashboard tracks your usage locally — no data is sent a
 
 ## Cost
 
-The script uses GPT-4o Mini, which costs roughly **$0.00015 per thread analysis** (less than a penny per hundred threads). A typical month of support work would cost well under $1.
+The script uses Groq's free tier with the Llama 3.1-8b-instant model — **completely free**, no credit card required. The free tier allows up to 30 requests per minute and 14,400 requests per day, which is more than enough for regular support work.
 
 ## Privacy & Security
 
-- Your OpenAI API key is stored locally in Tampermonkey's storage — it never leaves your browser except in API calls to OpenAI
-- Thread content is sent to OpenAI for analysis — these are public forum threads
+- Your Groq API key is stored locally in Tampermonkey's storage — it never leaves your browser except in API calls to Groq
+- Thread content is sent to Groq for analysis — these are public forum threads
 - Analytics data (thread URLs, plugin slugs, sentiment scores) is stored locally in Tampermonkey — never sent anywhere
 - No PII is ever collected or stored (no usernames, no thread content, no browser fingerprints)
 - The script only runs on `wordpress.org/support/topic/*` pages
@@ -125,7 +125,7 @@ wporg-review-helper/
 
 ### Phase 1: Tampermonkey Script (Current)
 - [x] Thread parsing and author detection
-- [x] AI-powered sentiment analysis via OpenAI GPT-4o Mini
+- [x] AI-powered sentiment analysis via Groq (Llama 3.1) — free tier, no cost
 - [x] Template recommendation with confidence scoring
 - [x] Copy-to-clipboard functionality
 - [x] Clean overlay UI with AI reasoning display
