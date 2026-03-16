@@ -10,8 +10,9 @@ When you click the **"📊 Analyze Thread"** button on any WordPress.org support
 
 1. **Parses the thread** — identifies the original poster vs. support agents, counts replies, measures thread duration
 2. **Sends the conversation to Groq AI (Llama 3.1)** — along with a detailed decision framework covering positive, neutral, and negative signals
-3. **Displays the AI's assessment** — sentiment (good/neutral/bad), confidence score, reasoning, detected signals, and the recommended template
-4. **Lets you copy the template** — one click copies the recommended text to your clipboard, ready to paste
+3. **Checks for prior reviews** — simultaneously scrapes the plugin's review pages to see if the user has already left a review (runs in parallel with the AI call — no extra wait)
+4. **Displays the AI's assessment** — sentiment (good/neutral/bad), confidence score, reasoning, detected signals, and the recommended template
+5. **Lets you copy the template** — one click copies the recommended text to your clipboard, ready to paste
 
 Thread content is sent to Groq's API for analysis. Your API key is stored locally in Tampermonkey. Analytics data (no PII) is stored locally for your own tracking.
 
@@ -26,6 +27,18 @@ The script evaluates threads through three possible outcomes:
 | **Bad** | ❌ Don't Ask | Issue unresolved, user frustrated, or silence | E only |
 
 When the AI detects a **grey area**, it leans toward suggesting a softer template but gives the HC an explicit "skip" option (Template E) if something still feels off.
+
+### Prior Review Check
+
+Before recommending a template, the script checks whether the thread's original poster has **already reviewed** the plugin. It fetches the plugin's public review pages on wordpress.org (up to 10 pages) and searches for the author's username.
+
+| Result | What happens |
+|---|---|
+| **⚠️ Prior review found** | Template automatically overridden to **E (Graceful Close)** — no review ask. An amber banner explains why. |
+| **✅ No review found** | Green banner confirms it's safe to ask. If reviews exceeded 10 pages, a disclaimer notes how many were checked. |
+| **Plugin not detected / check skipped** | No banner shown — the tool proceeds with the AI recommendation only. |
+
+This check runs **in parallel** with the AI analysis, so it adds no extra wait time.
 
 ## Templates
 
@@ -66,11 +79,12 @@ If you're viewing this on GitHub, you can click the raw link for the `.user.js` 
 2. Click the **"📊 Analyze Thread"** button (bottom-right corner)
 3. Wait a few seconds for the AI analysis
 4. Review the results panel:
+   - **Prior review check** — ⚠️ if user already reviewed, ✅ if clear (or skipped if plugin wasn't detected)
    - **Sentiment result** — Good ✅, Grey Area 🤔, or Bad ❌
    - **Confidence score** — how certain the AI is about its assessment
    - **AI reasoning** — a one-line explanation of why it reached this conclusion
    - **Signals detected** — specific things the AI noticed in the conversation
-   - **Recommended template** — with a copy button
+   - **Recommended template** — with a copy button (auto-overridden to Template E if prior review was found)
 5. Click **"📋 Copy Template"** to copy the text to your clipboard
 6. Paste into the reply box, replace `[REVIEW_LINK]` with the plugin's review URL (auto-detected when possible), and send
 7. Click the **"📈"** button (bottom-right) anytime to view your analytics dashboard
@@ -82,6 +96,7 @@ The built-in analytics dashboard tracks your usage locally — no data is sent a
 **What's tracked (no PII):**
 - Thread URL, plugin slug, sentiment result, confidence score
 - Which template was recommended and whether you copied it
+- Whether a prior review was found for the user/plugin combination
 - Timestamp of each analysis
 
 **What's NOT tracked:**
@@ -133,6 +148,7 @@ wporg-review-helper/
 - [x] Auto-detect plugin review link from forum page
 - [x] Local analytics dashboard with CSV export
 - [x] Grey area / neutral sentiment detection with HC judgment path
+- [x] Prior review check — auto-detect if user already reviewed the plugin
 
 ### Phase 2: Chrome Extension (Planned)
 - [ ] Sidebar panel instead of overlay
