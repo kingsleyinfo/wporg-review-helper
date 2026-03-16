@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Kingsleyinfo/wporg-review-helper
 // @updateURL    https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
-// @version      2.4.0
+// @version      2.5.0
 // @description  Analyzes WordPress.org support threads using AI and recommends review request templates based on customer sentiment.
 // @author       Kay (Kingsleyinfo)
 // @match        https://wordpress.org/support/topic/*
@@ -796,6 +796,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       sentiment: entry.sentiment || 'unknown',
       confidence: entry.confidence || 0,
       recommendedTemplate: entry.recommendedTemplate || null,
+      priorReviewFound: entry.priorReviewFound != null ? entry.priorReviewFound : null,
       templateCopied: false,
       templateCopiedKey: null,
     };
@@ -834,7 +835,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
    */
   function exportAnalyticsCSV() {
     const log = getAnalyticsLog();
-    const headers = ['Timestamp', 'Thread URL', 'Plugin Slug', 'Sentiment', 'Confidence', 'Recommended Template', 'Template Copied', 'Template Copied Key'];
+    const headers = ['Timestamp', 'Thread URL', 'Plugin Slug', 'Sentiment', 'Confidence', 'Recommended Template', 'Prior Review Found', 'Template Copied', 'Template Copied Key'];
     const rows = log.map(e => [
       e.timestamp,
       e.threadUrl,
@@ -842,6 +843,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       e.sentiment,
       Math.round((e.confidence || 0) * 100) + '%',
       e.recommendedTemplate || '',
+      e.priorReviewFound === true ? 'Yes' : e.priorReviewFound === false ? 'No' : '',
       e.templateCopied ? 'Yes' : 'No',
       e.templateCopiedKey || '',
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
@@ -1174,10 +1176,97 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
   }
 
   // ──────────────────────────────────────────────
+  // 7b. PRIOR REVIEW CHECK
+  // ──────────────────────────────────────────────
+
+  /**
+   * Checks if the given user has already left a review for the given plugin.
+   * Fetches the plugin's reviews pages on wordpress.org and searches for the
+   * author's username slug in reviewer links.
+   *
+   * Same-origin request (script runs on wordpress.org) — no extra @connect needed.
+   * Caps at maxPages to avoid hammering the server for popular plugins.
+   *
+   * @param {string} pluginSlug - The plugin slug (e.g., 'woocommerce')
+   * @param {string} authorSlug - The thread author's username slug (e.g., 'johndoe42')
+   * @returns {Promise<{found: boolean, pagesFetched: number, totalPages: number, reviewUrl?: string, error?: string}>}
+   */
+  async function checkExistingReview(pluginSlug, authorSlug) {
+    if (!pluginSlug || !authorSlug) {
+      return { found: false, error: 'missing-data', pagesFetched: 0, totalPages: 0 };
+    }
+
+    const baseUrl = `https://wordpress.org/plugins/${pluginSlug}/reviews/`;
+    const maxPages = 10;
+    let totalPages = 1;
+    const normalizedAuthor = authorSlug.toLowerCase();
+
+    for (let page = 1; page <= Math.min(totalPages, maxPages); page++) {
+      const url = page === 1 ? baseUrl : `${baseUrl}page/${page}/`;
+
+      try {
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          // 404 on first page means no reviews exist yet — user definitely hasn't reviewed
+          if (response.status === 404 && page === 1) {
+            return { found: false, pagesFetched: 0, totalPages: 0 };
+          }
+          continue;
+        }
+
+        const html = await response.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+
+        // Search for reviewer links matching the author slug
+        // WordPress.org reviews link to profiles.wordpress.org/{username}/ or /support/users/{username}/
+        const reviewerLinks = doc.querySelectorAll(
+          'a[href*="profiles.wordpress.org"], a[href*="/support/users/"]'
+        );
+
+        for (const link of reviewerLinks) {
+          const href = link.getAttribute('href') || '';
+          const match =
+            href.match(/profiles\.wordpress\.org\/([^/]+)/) ||
+            href.match(/\/support\/users\/([^/]+)/);
+          if (match && match[1].toLowerCase() === normalizedAuthor) {
+            return { found: true, pagesFetched: page, totalPages, reviewUrl: url };
+          }
+        }
+
+        // On the first page, detect total number of review pages from pagination links
+        if (page === 1) {
+          const allLinks = doc.querySelectorAll('a');
+          for (const pl of allLinks) {
+            const href = pl.getAttribute('href') || '';
+            const pageMatch = href.match(/\/reviews\/page\/(\d+)/);
+            if (pageMatch) {
+              const num = parseInt(pageMatch[1], 10);
+              if (num > totalPages) totalPages = num;
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`WRH: Error fetching reviews page ${page}:`, err);
+        // If even the first page fails, bail out gracefully
+        if (page === 1) {
+          return { found: false, error: 'fetch-failed', pagesFetched: 0, totalPages: 0 };
+        }
+      }
+    }
+
+    return {
+      found: false,
+      pagesFetched: Math.min(totalPages, maxPages),
+      totalPages,
+    };
+  }
+
+  // ──────────────────────────────────────────────
   // 8. UI RENDERING
   // ──────────────────────────────────────────────
 
-  function renderPanel(aiResult, thread, logEntryId) {
+  function renderPanel(aiResult, thread, logEntryId, reviewCheck) {
     const existing = document.getElementById('wrh-overlay');
     if (existing) existing.remove();
 
@@ -1257,6 +1346,27 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       `;
     }
 
+    // Prior review check banner
+    let reviewCheckHTML = '';
+    if (reviewCheck && reviewCheck.found) {
+      reviewCheckHTML = `
+        <div style="background: #fef2f2; border: 1px solid #f5c6c6; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 16px;">⚠️</span>
+          <span><strong>This user has already reviewed ${pluginInfo ? pluginInfo.slug : 'this plugin'}.</strong> Template overridden to E (Graceful Close) — no review ask needed.</span>
+        </div>
+      `;
+    } else if (reviewCheck && !reviewCheck.found && !reviewCheck.error) {
+      const disclaimer = reviewCheck.totalPages > reviewCheck.pagesFetched
+        ? ` (checked ${reviewCheck.pagesFetched} of ${reviewCheck.totalPages} review pages)`
+        : '';
+      reviewCheckHTML = `
+        <div style="background: #edfcf2; border: 1px solid #b8e6cc; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 16px;">✅</span>
+          <span>No existing review found${disclaimer} — safe to ask.</span>
+        </div>
+      `;
+    }
+
     const signalsHTML = (aiResult.signals || []).map(s => `
       <li>
         <span class="wrh-signal-icon">${signalIcons[s.type] || 'ℹ️'}</span>
@@ -1298,6 +1408,8 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
               <span>Could not detect plugin — <code>[REVIEW_LINK]</code> will remain as placeholder. Replace it manually.</span>
             </div>
           `}
+
+          ${reviewCheckHTML}
 
           ${greyGuidanceHTML}
 
@@ -1654,20 +1766,36 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
         // 2. Format thread for AI
         const threadText = formatThreadForAI(thread);
 
-        // 3. Call Groq AI
-        const aiResult = await callGroq(threadText);
-
-        // 4. Log analytics (no PII — just URL, plugin, sentiment, template)
+        // 3. Detect plugin info (used for review link + prior review check)
         const pluginInfo = detectPluginReviewLink();
+
+        // 4. Run AI analysis and prior review check in parallel
+        const reviewCheckPromise = (pluginInfo && thread.authorSlug)
+          ? checkExistingReview(pluginInfo.slug, thread.authorSlug)
+          : Promise.resolve(null);
+
+        const [aiResult, reviewCheck] = await Promise.all([
+          callGroq(threadText),
+          reviewCheckPromise,
+        ]);
+
+        // 5. Override to Template E if user already left a review
+        if (reviewCheck && reviewCheck.found) {
+          aiResult.primaryTemplate = 'E';
+          aiResult.secondaryTemplate = null;
+        }
+
+        // 6. Log analytics (no PII — just URL, plugin, sentiment, template)
         const logEntryId = addLogEntry({
           pluginSlug: pluginInfo ? pluginInfo.slug : null,
           sentiment: aiResult.sentiment,
           confidence: aiResult.confidence,
           recommendedTemplate: aiResult.primaryTemplate,
+          priorReviewFound: reviewCheck ? reviewCheck.found : null,
         });
 
-        // 5. Render results (pass logEntryId so copy buttons can update it)
-        renderPanel(aiResult, thread, logEntryId);
+        // 7. Render results (pass logEntryId and reviewCheck so panel can show status)
+        renderPanel(aiResult, thread, logEntryId, reviewCheck);
 
       } catch (err) {
         console.error('WPorg Review Helper Error:', err);
