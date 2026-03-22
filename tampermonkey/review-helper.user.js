@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Kingsleyinfo/wporg-review-helper
 // @updateURL    https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
-// @version      2.5.0
+// @version      2.6.0
 // @description  Analyzes WordPress.org support threads using AI and recommends review request templates based on customer sentiment.
 // @author       Kay (Kingsleyinfo)
 // @match        https://wordpress.org/support/topic/*
@@ -797,6 +797,8 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       confidence: entry.confidence || 0,
       recommendedTemplate: entry.recommendedTemplate || null,
       priorReviewFound: entry.priorReviewFound != null ? entry.priorReviewFound : null,
+      troubleshootingDetected: entry.troubleshootingDetected || false,
+      lastReplyIsHC: entry.lastReplyIsHC || false,
       templateCopied: false,
       templateCopiedKey: null,
     };
@@ -835,7 +837,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
    */
   function exportAnalyticsCSV() {
     const log = getAnalyticsLog();
-    const headers = ['Timestamp', 'Thread URL', 'Plugin Slug', 'Sentiment', 'Confidence', 'Recommended Template', 'Prior Review Found', 'Template Copied', 'Template Copied Key'];
+    const headers = ['Timestamp', 'Thread URL', 'Plugin Slug', 'Sentiment', 'Confidence', 'Recommended Template', 'Prior Review Found', 'Troubleshooting Detected', 'Last Reply Is HC', 'Template Copied', 'Template Copied Key'];
     const rows = log.map(e => [
       e.timestamp,
       e.threadUrl,
@@ -844,6 +846,8 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       Math.round((e.confidence || 0) * 100) + '%',
       e.recommendedTemplate || '',
       e.priorReviewFound === true ? 'Yes' : e.priorReviewFound === false ? 'No' : '',
+      e.troubleshootingDetected === undefined ? '' : (e.troubleshootingDetected ? 'Yes' : 'No'),
+      e.lastReplyIsHC === undefined ? '' : (e.lastReplyIsHC ? 'Yes' : 'No'),
       e.templateCopied ? 'Yes' : 'No',
       e.templateCopiedKey || '',
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
@@ -947,6 +951,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           }
 
           const isOP = authorSlug ? (replySlug === authorSlug) : (replyAuthor === authorName);
+          const isHC = /\(woo-hc\)/i.test(replyAuthor);
 
           let dateStr = '';
           if (dateEl) dateStr = dateEl.textContent.trim();
@@ -957,6 +962,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
             content: contentEl.textContent.trim(),
             isOP: isOP,
             isAgent: !isOP,
+            isHC: isHC,
             date: dateStr,
           });
         }
@@ -999,7 +1005,34 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
   }
 
   // ──────────────────────────────────────────────
-  // 6b. PLUGIN DETECTION & REVIEW LINK
+  // 6b. TROUBLESHOOTING STATUS CHECK
+  // ──────────────────────────────────────────────
+
+  function checkTroubleshootingStatus(thread) {
+    const replies = thread.replies;
+    if (!replies || replies.length === 0) {
+      return { isTroubleshooting: false, signals: { lastReplyIsAgent: false, lastReplyIsHC: false, hcName: null, noResolutionLanguage: true } };
+    }
+
+    const lastReply = replies[replies.length - 1];
+    const lastReplyIsAgent = lastReply.isAgent;
+    const lastReplyIsHC = lastReply.isHC || false;
+    const hcName = lastReplyIsHC ? lastReply.author : null;
+
+    const resolutionPattern = /\b(fixed|resolved|working now|that worked|works now|all good|sorted|solved|perfect|thanks so much|problem solved|good to go|up and running|back to normal|that did it|works great|works perfectly|working perfectly|working great|working fine|works fine)\b/i;
+    const opReplies = replies.filter(r => r.isOP);
+    const noResolutionLanguage = !opReplies.some(r => resolutionPattern.test(r.content));
+
+    const isTroubleshooting = lastReplyIsAgent && noResolutionLanguage;
+
+    return {
+      isTroubleshooting,
+      signals: { lastReplyIsAgent, lastReplyIsHC, hcName, noResolutionLanguage },
+    };
+  }
+
+  // ──────────────────────────────────────────────
+  // 6c. PLUGIN DETECTION & REVIEW LINK
   // ──────────────────────────────────────────────
 
   /**
@@ -1266,7 +1299,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
   // 8. UI RENDERING
   // ──────────────────────────────────────────────
 
-  function renderPanel(aiResult, thread, logEntryId, reviewCheck) {
+  function renderPanel(aiResult, thread, logEntryId, reviewCheck, troubleshootingCheck) {
     const existing = document.getElementById('wrh-overlay');
     if (existing) existing.remove();
 
@@ -1367,6 +1400,26 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       `;
     }
 
+    // Troubleshooting status banner (only when isTroubleshooting AND sentiment is not good)
+    let troubleshootingHTML = '';
+    if (troubleshootingCheck && troubleshootingCheck.isTroubleshooting && aiResult.sentiment !== 'good' && !(reviewCheck && reviewCheck.found)) {
+      const escapeHTML = (str) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const lastResponder = troubleshootingCheck.signals.lastReplyIsHC
+        ? escapeHTML(troubleshootingCheck.signals.hcName)
+        : 'a support agent';
+      troubleshootingHTML = `
+        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: flex-start; gap: 8px;">
+          <span style="font-size: 16px; flex-shrink: 0;">🔧</span>
+          <div>
+            <strong>Thread may still be in progress.</strong> The last reply is from ${lastResponder} and no resolution has been confirmed yet. You can wait for a response, or use Template F (Delayed Follow-Up) to check in and request a review proactively.
+            <div style="margin-top: 8px;">
+              <button class="wrh-copy-btn" data-template="F" style="font-size: 12px; padding: 4px 10px; cursor: pointer; border: 1px solid #fde68a; border-radius: 4px; background: #fff; color: #92400e;">📋 Copy Template F</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     const signalsHTML = (aiResult.signals || []).map(s => `
       <li>
         <span class="wrh-signal-icon">${signalIcons[s.type] || 'ℹ️'}</span>
@@ -1410,6 +1463,8 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           `}
 
           ${reviewCheckHTML}
+
+          ${troubleshootingHTML}
 
           ${greyGuidanceHTML}
 
@@ -1763,8 +1818,9 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           return;
         }
 
-        // 2. Format thread for AI
+        // 2. Format thread for AI + check troubleshooting status (local, synchronous)
         const threadText = formatThreadForAI(thread);
+        const troubleshootingCheck = checkTroubleshootingStatus(thread);
 
         // 3. Detect plugin info (used for review link + prior review check)
         const pluginInfo = detectPluginReviewLink();
@@ -1792,10 +1848,12 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           confidence: aiResult.confidence,
           recommendedTemplate: aiResult.primaryTemplate,
           priorReviewFound: reviewCheck ? reviewCheck.found : null,
+          troubleshootingDetected: troubleshootingCheck.isTroubleshooting,
+          lastReplyIsHC: troubleshootingCheck.signals.lastReplyIsHC,
         });
 
-        // 7. Render results (pass logEntryId and reviewCheck so panel can show status)
-        renderPanel(aiResult, thread, logEntryId, reviewCheck);
+        // 7. Render results (pass logEntryId, reviewCheck, and troubleshootingCheck)
+        renderPanel(aiResult, thread, logEntryId, reviewCheck, troubleshootingCheck);
 
       } catch (err) {
         console.error('WPorg Review Helper Error:', err);
