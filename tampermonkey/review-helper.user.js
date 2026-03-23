@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Kingsleyinfo/wporg-review-helper
 // @updateURL    https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
-// @version      2.6.0
+// @version      2.7.0
 // @description  Analyzes WordPress.org support threads using AI and recommends review request templates based on customer sentiment.
 // @author       Kay (Kingsleyinfo)
 // @match        https://wordpress.org/support/topic/*
