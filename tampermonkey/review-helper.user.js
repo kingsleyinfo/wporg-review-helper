@@ -55,14 +55,19 @@
       text: `Great news that the update resolved this for you! Your report helped our support and development teams work together on a fix. If you'd like to share your experience, a review here would benefit the community: [REVIEW_LINK]\n\nThanks for sticking with us through the process!`,
     },
     E: {
-      name: 'Graceful Close (No Review Ask)',
-      description: 'Not a good experience — close gracefully without asking for a review.',
-      text: `Thanks for reaching out and for your patience while we looked into this. I've [logged this as a feature request / escalated to the development team / shared the details internally], and your feedback is genuinely valuable in shaping future improvements.\n\nIf anything else comes up down the road, don't hesitate to open a new thread. We're always here to help!`,
+      name: 'Graceful Close (Unresolved)',
+      description: 'User was engaged but issue not resolved — close gracefully without asking for a review.',
+      text: `Thanks for reaching out and for your patience while we looked into this! I really appreciate you taking the time to report this — it genuinely helps us improve.\n\nI'll go ahead and mark this thread as resolved for now. If anything changes on your end or you need further assistance down the road, feel free to start a new thread anytime — we're always happy to help!`,
     },
     F: {
       name: 'Delayed Follow-Up',
       description: 'Thread spans multiple days and resolved — check in before asking for review.',
       text: `Hi [NAME]! Just checking in — is everything still working well after the changes we made? If so, and you'd like to help other store owners who might face something similar, we'd really appreciate a quick review here: [REVIEW_LINK]\n\nIf anything's come up, feel free to let us know and we'll take another look!`,
+    },
+    G: {
+      name: 'Graceful Close (No Response)',
+      description: 'User went silent after agent reply — check in and close gracefully.',
+      text: `Hi [NAME]! I wanted to check in — I know we were working through this together and I haven't heard back. I hope that means things are running smoothly on your end!\n\nI'll go ahead and wrap this one up for now, but if you ever need a hand with anything, feel free to open a new thread anytime. We're always here to help!`,
     },
   };
 
@@ -81,15 +86,15 @@
 Follow this decision tree strictly:
 
 ### Step 1: Was the issue resolved?
-- NO → sentiment is "bad". Recommend Template E.
+- NO → sentiment is "bad". If the user's last message exists (they were engaged but unresolved), recommend Template E. If the last message is from the agent (user went silent), recommend Template G.
 
 ### Step 2: Did the user confirm or accept the solution?
-- NO (silence / no response from user — last message is from agent) → sentiment is "bad". Recommend Template E.
+- NO (silence / no response from user — last message is from agent) → sentiment is "bad". Recommend Template G.
 
 ### Step 3: What is the user's overall tone?
 - POSITIVE → sentiment is "good". Recommend Templates A–D or F.
 - NEUTRAL → sentiment is "neutral". Recommend Templates B, C, D, or F (softer options). NEVER recommend Template A for neutral.
-- NEGATIVE → sentiment is "bad". Recommend Template E.
+- NEGATIVE → sentiment is "bad". If the last message is from the user, recommend Template E. If the last message is from the agent, recommend Template G.
 
 ## Sentiment Definitions
 
@@ -135,7 +140,9 @@ Follow this decision tree strictly:
 - Template E should always be available as a fallback "skip" option (set as secondaryTemplate)
 
 ### When sentiment is BAD:
-- Always use **E (Graceful Close)**
+- **E (Graceful Close — Unresolved)**: The user was engaged (their last message exists) but the issue was not resolved. Use when the user's last message shows frustration, an unresolved problem, or a feature request with no fix.
+- **G (Graceful Close — No Response)**: The user went silent — the last message in the thread is from the agent with no user reply. Use when the thread ended in agent silence.
+- Pick E vs G based on WHO sent the last message: user → E, agent → G.
 
 ## Important Analysis Notes
 - Pay close attention to the FINAL messages in the thread — they carry the most weight
@@ -151,8 +158,8 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
 {
   "sentiment": "good" | "neutral" | "bad",
   "confidence": 0.0 to 1.0,
-  "primaryTemplate": "A" | "B" | "C" | "D" | "E" | "F",
-  "secondaryTemplate": null | "E" | "F",
+  "primaryTemplate": "A" | "B" | "C" | "D" | "E" | "F" | "G",
+  "secondaryTemplate": null | "E" | "F" | "G",
   "signals": [
     { "type": "positive" | "negative" | "neutral" | "info", "text": "description of signal" }
   ],
@@ -1408,12 +1415,12 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
         ? escapeHTML(troubleshootingCheck.signals.hcName)
         : 'a support agent';
       troubleshootingHTML = `
-        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: flex-start; gap: 8px;">
+        <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: flex-start; gap: 8px;">
           <span style="font-size: 16px; flex-shrink: 0;">🔧</span>
           <div>
             <strong>Thread may still be in progress.</strong> The last reply is from ${lastResponder} and no resolution has been confirmed yet. You can wait for a response, or use Template F (Delayed Follow-Up) to check in and request a review proactively.
             <div style="margin-top: 8px;">
-              <button class="wrh-copy-btn" data-template="F" style="font-size: 12px; padding: 4px 10px; cursor: pointer; border: 1px solid #fde68a; border-radius: 4px; background: #fff; color: #92400e;">📋 Copy Template F</button>
+              <button class="wrh-copy-btn" data-template="F" style="font-size: 12px; padding: 4px 10px; cursor: pointer; border: 1px solid #f59e0b; border-radius: 4px; background: #fff; color: #92400e;">📋 Copy Template F</button>
             </div>
           </div>
         </div>
@@ -1576,7 +1583,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     `;
 
     // Build template breakdown
-    const templateKeys = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const templateKeys = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
     const templateBreakdownHTML = templateKeys.map(k => {
       const count = stats.templateCounts[k] || 0;
       return count > 0 ? `<span class="wrh-stat"><strong>${count}×</strong> Template ${k}</span>` : '';
