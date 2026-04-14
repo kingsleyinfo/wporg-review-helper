@@ -32,42 +32,11 @@
   // 2. TEMPLATES
   // ──────────────────────────────────────────────
 
-  const TEMPLATES = {
-    A: {
-      name: 'Quick Resolution',
-      description: 'Short thread (≤3 agent replies), user confirmed fix, positive tone.',
-      text: `I'm glad we got that sorted! 🎉 Your experience could really help other store owners who might run into something similar. If you have a moment, we'd appreciate a quick review here: [REVIEW_LINK]\n\nThanks again — don't hesitate to reach out if anything else comes up!`,
-    },
-    B: {
-      name: 'Resolved After Long Thread',
-      description: 'Longer thread (4+ agent replies), user confirmed fix, positive/neutral tone.',
-      text: `I'm happy we were able to work through that together — I know it took some patience on your end! If the solution is still holding up and you'd like to share your experience to help others in the community, you can leave a review here: [REVIEW_LINK]\n\nFeel free to open a new thread anytime if anything else comes up.`,
-    },
-    C: {
-      name: 'Workaround Accepted',
-      description: 'Agent offered a workaround and the user accepted it positively.',
-      text: `I'm glad the workaround is doing the job! If you'd like to share your experience, it really helps other users who might face something similar: [REVIEW_LINK]\n\nWe've noted your feedback too — it helps our team prioritize what to improve next. Thanks for your patience!`,
-    },
-    D: {
-      name: 'Resolved After Escalation',
-      description: 'Thread references GitHub/escalation/patch/update that resolved the issue.',
-      text: `Great news that the update resolved this for you! Your report helped our support and development teams work together on a fix. If you'd like to share your experience, a review here would benefit the community: [REVIEW_LINK]\n\nThanks for sticking with us through the process!`,
-    },
-    E: {
-      name: 'Graceful Close (Unresolved)',
-      description: 'User was engaged but issue not resolved — close gracefully without asking for a review.',
-      text: `Thanks for reaching out and for your patience while we looked into this! I really appreciate you taking the time to report this — it genuinely helps us improve.\n\nI'll go ahead and mark this thread as resolved for now. If anything changes on your end or you need further assistance down the road, feel free to start a new thread anytime — we're always happy to help!`,
-    },
-    F: {
-      name: 'Delayed Follow-Up',
-      description: 'Thread spans multiple days and resolved — check in before asking for review.',
-      text: `Hi [NAME]! Just checking in — is everything still working well after the changes we made? If so, and you'd like to help other store owners who might face something similar, we'd really appreciate a quick review here: [REVIEW_LINK]\n\nIf anything's come up, feel free to let us know and we'll take another look!`,
-    },
-    G: {
-      name: 'Graceful Close (No Response)',
-      description: 'User went silent after agent reply — check in and close gracefully.',
-      text: `Hi [NAME]! I wanted to check in — I know we were working through this together and I haven't heard back. I hope that means things are running smoothly on your end!\n\nI'll go ahead and wrap this one up for now, but if you ever need a hand with anything, feel free to open a new thread anytime. We're always here to help!`,
-    },
+  // Single fallback template — used when sentiment is bad/unresolved (no review ask)
+  const FALLBACK_TEMPLATE = {
+    name: 'Graceful Close',
+    description: 'Close the thread without asking for a review. Use when the issue was not resolved or the merchant is not satisfied.',
+    text: `Thanks for reaching out and for your patience while we looked into this! I really appreciate you taking the time to report this — it genuinely helps us improve.\n\nI'll go ahead and mark this thread as resolved for now. If anything changes on your end or you need further assistance down the road, feel free to start a new thread anytime — we're always happy to help!`,
   };
 
   // ──────────────────────────────────────────────
@@ -77,121 +46,93 @@
   const SYSTEM_PROMPT = buildSystemPrompt();
 
   function buildSystemPrompt() {
-    // Build template tone examples from TEMPLATES constants
-    const toneExamples = Object.entries(TEMPLATES).map(([key, t]) =>
-      `Template ${key} (${t.name}): "${t.text.slice(0, 120)}..."`
-    ).join('\n');
+    return `You are a sentiment analysis assistant for WordPress.org plugin support threads. Your purpose is to help Happiness Engineers (HCs) decide whether to ask a customer for a plugin review when closing a support thread.
 
-    return `You are a sentiment analysis and message drafting assistant for WordPress.org plugin support threads. Your job is to analyze a support conversation and determine:
+## What This Tool Does
 
-1. Whether the customer had a GOOD, NEUTRAL, or BAD experience.
-2. Which response template (A–F) the support agent should use.
-3. Key signals that led to your determination.
+An HC uses this tool when they are about to close a support thread. The tool should:
+1. Analyze the customer's experience — was the issue resolved and is the customer satisfied?
+2. If YES (good or neutral sentiment): draft a closing message that references the specific support interaction AND clearly asks the customer to leave a plugin review.
+3. If NO (bad sentiment / unresolved): indicate that a review request is NOT appropriate. Do NOT draft a review request.
 
-## Decision Framework
+## Sentiment Analysis
 
-Follow this decision tree strictly:
-
-### Step 1: Was the issue resolved?
-- NO → sentiment is "bad". If the user's last message exists (they were engaged but unresolved), recommend Template E. If the last message is from the agent (user went silent), recommend Template G.
-
-### Step 2: Did the user confirm or accept the solution?
-- NO (silence / no response from user — last message is from agent) → sentiment is "bad". Recommend Template G.
-
-### Step 3: What is the user's overall tone?
-- POSITIVE → sentiment is "good". Recommend Templates A–D or F.
-- NEUTRAL → sentiment is "neutral". Recommend Templates B, C, D, or F (softer options). NEVER recommend Template A for neutral.
-- NEGATIVE → sentiment is "bad". If the last message is from the user, recommend Template E. If the last message is from the agent, recommend Template G.
-
-## Sentiment Definitions
-
-### GOOD (positive tone):
-- User explicitly confirmed the fix works WITH enthusiasm (e.g., "that worked perfectly!", "amazing, fixed!", "you're the best!", "lifesaver!", "thanks so much, all sorted!")
-- Strong positive/grateful tone — expressions of relief, excitement, gratitude beyond a simple "thanks"
+### GOOD — Customer is satisfied, safe to ask for a review
+- User explicitly confirmed the fix works with enthusiasm ("that worked perfectly!", "amazing!", "lifesaver!", "thanks so much, all sorted!")
+- Strong positive/grateful tone beyond a bare "thanks"
 - Clear resolution with warm closing language
 
-### NEUTRAL (lukewarm tone — grey area):
-- User acknowledged the fix but WITHOUT enthusiasm — phrases like "okay," "thanks," "I'll try that," "seems to work," "alright," "got it," "it's working now"
-- Short confirmations without elaboration (a bare "thanks" or "okay that works")
-- No negative language, but also no strong positive signals
-- User accepted a workaround without expressing excitement or dissatisfaction
-- Functional acknowledgment — they confirmed it works, but the energy is flat
-- IMPORTANT: Neutral is NOT silence. Silence = bad. Neutral means the user responded, but the response is lukewarm.
+### NEUTRAL — Customer seems okay, proceed with a softer review ask
+- User acknowledged the fix but without enthusiasm ("okay," "thanks," "seems to work," "got it," "it's working now")
+- Short confirmations without elaboration
+- No negative language, but no strong positive signals either
+- IMPORTANT: Neutral is NOT silence. Silence = bad.
 
-### BAD (negative tone or unresolved):
-- Issue unresolved (e.g., "still not working," "same issue," "no luck," "giving up")
-- User was frustrated, angry, or disappointed
-- Feature request with no resolution
-- User was redirected elsewhere (hosting, theme dev, GitHub issue, out of scope)
-- Agent only provided documentation links with no confirmation of resolution
-- User mentioned choosing another plugin or solution
+### BAD — Do NOT ask for a review
+- Issue unresolved ("still not working," "same issue," "giving up")
+- User frustrated, angry, or disappointed
+- User redirected elsewhere with no resolution
 - Thread ended in silence (last message from agent, no user response)
-- Long thread with no clear confirmation of resolution
-- Sarcasm or polite frustration (e.g., "thanks anyway, I'll find another plugin")
-
-## Template Selection
-
-### When sentiment is GOOD:
-- **A (Quick Resolution)**: Thread is short (≤3 agent replies), user confirmed, clearly positive tone
-- **B (Resolved After Long Thread)**: Thread is longer (4+ agent replies), user confirmed, positive tone
-- **C (Workaround Accepted)**: Agent offered a workaround AND user accepted it positively/enthusiastically
-- **D (Resolved After Escalation)**: Thread references GitHub, escalation, developer fix, patch, or update resolving the issue
-- **F (Delayed Follow-Up)**: Thread spans multiple days AND resolved — suggest alongside primary template
-
-### When sentiment is NEUTRAL (grey area):
-- **B (Resolved After Long Thread)**: Long thread, resolved, neutral tone
-- **C (Workaround Accepted)**: Workaround accepted, but not enthusiastically
-- **D (Resolved After Escalation)**: Escalation resolved, user came back with flat confirmation
-- **F (Delayed Follow-Up)**: Solution provided, user confirmed after a delay with lukewarm response
-- NEVER suggest Template A for neutral — it's too upbeat for a lukewarm thread
-- Template E should always be available as a fallback "skip" option (set as secondaryTemplate)
-
-### When sentiment is BAD:
-- **E (Graceful Close — Unresolved)**: The user was engaged (their last message exists) but the issue was not resolved. Use when the user's last message shows frustration, an unresolved problem, or a feature request with no fix.
-- **G (Graceful Close — No Response)**: The user went silent — the last message in the thread is from the agent with no user reply. Use when the thread ended in agent silence.
-- Pick E vs G based on WHO sent the last message: user → E, agent → G.
+- User went silent after agent's suggestion
+- Sarcasm or polite frustration ("thanks anyway, I'll find another plugin")
+- If user says "thanks" but issue clearly isn't fixed, that's BAD
 
 ## Important Analysis Notes
-- Pay close attention to the FINAL messages in the thread — they carry the most weight
-- "Thank you" alone (without elaboration) leans NEUTRAL, not positive
-- A bare "thanks" or "okay" after a fix is neutral, not good
-- Sarcasm and polite frustration should be detected as negative
-- If the user says thanks but the issue clearly isn't fixed, that's BAD
-- Consider the full arc of the conversation, not just individual phrases
-- When in doubt between good and neutral, choose NEUTRAL — it's safer to let the HC decide
+- The FINAL messages carry the most weight
+- "Thank you" alone leans NEUTRAL, not good
+- A bare "thanks" or "okay" is neutral, not good
+- Consider the full arc, not just individual phrases
+- When in doubt between good and neutral, choose NEUTRAL
 
-## Message Drafting
+## Message Drafting (ONLY for good or neutral sentiment)
 
-After analyzing sentiment, draft a personalized message for the support agent to send. The message should:
-- Match the tone of the recommended template (see tone examples below)
-- Use [NAME] as a placeholder for the customer's name
-- For good/neutral sentiment: include [REVIEW_LINK] as a placeholder for the plugin review URL
-- For bad sentiment: do NOT ask for a review. Close gracefully instead.
-- Be natural, warm, and specific to the conversation (reference what was discussed)
-- Be 2-4 sentences, similar in length to the template examples
+When sentiment is good or neutral, draft a personalized closing message. This message must:
 
-## Tone Examples (from pre-written templates)
-${toneExamples}
+1. **Reference the specific support interaction** — mention what was discussed, what the issue was, and how it was resolved. Make it feel personal, not generic.
+2. **Clearly ask the customer to leave a review** — don't just drop a link. Explicitly ask them to take the action of writing a review. Frame it as: their experience helping other users who might face similar issues.
+3. **Include [REVIEW_LINK] as a clickable call to action** — the link should be presented as the place where they can leave their review. Make it clear what happens when they click it.
+4. **Match the tone to the sentiment:**
+   - Good: warm, enthusiastic, grateful
+   - Neutral: softer, appreciative, no pressure
+5. **Use [NAME] as a placeholder** for the customer's name.
+6. **Be 3-5 sentences.** Natural, warm, specific to the conversation.
+
+### Good Draft Examples
+
+"Hi [NAME]! I'm really glad we were able to sort out that checkout issue by disabling the conflicting plugin. It's great to hear things are running smoothly now! If you have a moment, it would mean a lot to us if you could share your experience by leaving a review here: [REVIEW_LINK] — your feedback helps other store owners who might run into something similar. Thanks again, and don't hesitate to reach out if anything else comes up!"
+
+"Hey [NAME], so happy the shipping calculation fix worked out for you! Since you've had a chance to see how things work with the update, would you consider leaving a quick review about your experience? You can do that right here: [REVIEW_LINK]. It really helps other merchants in the community. We're always here if you need anything!"
+
+### Neutral Draft Examples
+
+"Hi [NAME], glad to hear things are working on your end now. I know it took a bit of back and forth to get the product display sorted, and I appreciate your patience! If you'd be open to it, sharing your experience in a quick review would really help other users who might face something similar: [REVIEW_LINK]. No pressure at all — and feel free to reach out anytime if anything else comes up."
+
+### What NOT to do
+- Do NOT just place the link without asking. Wrong: "You can find the review page here: [REVIEW_LINK]"
+- Do NOT be demanding. Wrong: "Please leave us a 5-star review."
+- Do NOT be generic. Wrong: "Thanks for contacting support! Leave a review here: [REVIEW_LINK]"
+- The draft should feel like a real person wrote it, referencing what actually happened in the thread.
+
+## When sentiment is BAD
+
+Do NOT draft a review request message. Set draftedMessage to null. The HC will use a standard graceful close template instead.
 
 ## Thread Summary
 
-Provide a one-line summary of the thread: what was the issue and how was it resolved (or not).
+Provide a one-line summary: what was the issue and how was it resolved (or not).
 Example: "User had WooCommerce checkout error, resolved by disabling conflicting plugin."
 
 ## Response Format
 You MUST respond with valid JSON only. No markdown formatting, no code blocks, no extra text.
-The response must match this exact structure:
 {
   "sentiment": "good" | "neutral" | "bad",
   "confidence": 0.0 to 1.0,
-  "primaryTemplate": "A" | "B" | "C" | "D" | "E" | "F" | "G",
-  "secondaryTemplate": null | "E" | "F" | "G",
   "signals": [
     { "type": "positive" | "negative" | "neutral" | "info", "text": "description of signal" }
   ],
-  "reasoning": "One sentence summary of why you reached this conclusion",
+  "reasoning": "One sentence explaining why you reached this conclusion",
   "summary": "One-line thread summary: issue + resolution",
-  "draftedMessage": "The personalized message for the agent to send, using [NAME] and [REVIEW_LINK] placeholders"
+  "draftedMessage": "The personalized closing message with review request (null if bad sentiment)"
 }`;
   }
 
@@ -1046,7 +987,6 @@ The response must match this exact structure:
       pluginSlug: entry.pluginSlug || null,
       sentiment: entry.sentiment || 'unknown',
       confidence: entry.confidence || 0,
-      recommendedTemplate: entry.recommendedTemplate || null,
       priorReviewFound: entry.priorReviewFound != null ? entry.priorReviewFound : null,
       troubleshootingDetected: entry.troubleshootingDetected || false,
       lastReplyIsHC: entry.lastReplyIsHC || false,
@@ -1094,19 +1034,16 @@ The response must match this exact structure:
    */
   function exportAnalyticsCSV() {
     const log = getAnalyticsLog();
-    const headers = ['Timestamp', 'Thread URL', 'Plugin Slug', 'Sentiment', 'Confidence', 'Recommended Template', 'Prior Review Found', 'Troubleshooting Detected', 'Last Reply Is HC', 'Template Copied', 'Template Copied Key', 'Draft Generated', 'Draft Copied', 'Draft Edited', 'Template Fallback', 'Model Used'];
+    const headers = ['Timestamp', 'Thread URL', 'Plugin Slug', 'Sentiment', 'Confidence', 'Prior Review Found', 'Troubleshooting Detected', 'Last Reply Is HC', 'Draft Generated', 'Draft Copied', 'Draft Edited', 'Used Fallback Close', 'Model Used'];
     const rows = log.map(e => [
       e.timestamp,
       e.threadUrl,
       e.pluginSlug || '',
       e.sentiment,
       Math.round((e.confidence || 0) * 100) + '%',
-      e.recommendedTemplate || '',
       e.priorReviewFound === true ? 'Yes' : e.priorReviewFound === false ? 'No' : '',
       e.troubleshootingDetected === undefined ? '' : (e.troubleshootingDetected ? 'Yes' : 'No'),
       e.lastReplyIsHC === undefined ? '' : (e.lastReplyIsHC ? 'Yes' : 'No'),
-      e.templateCopied ? 'Yes' : 'No',
-      e.templateCopiedKey || '',
       e.draftGenerated ? 'Yes' : 'No',
       e.draftCopied ? 'Yes' : 'No',
       e.draftEdited ? 'Yes' : 'No',
@@ -1124,7 +1061,7 @@ The response must match this exact structure:
     const log = getAnalyticsLog();
     const total = log.length;
     if (total === 0) {
-      return { total: 0, good: 0, neutral: 0, bad: 0, inconclusive: 0, copyRate: 0, draftRate: 0, draftCopyRate: 0, templateFallbackRate: 0, templateCounts: {}, pluginCounts: {}, recentEntries: [] };
+      return { total: 0, good: 0, neutral: 0, bad: 0, inconclusive: 0, copyRate: 0, draftRate: 0, draftCopyRate: 0, templateFallbackRate: 0, pluginCounts: {}, recentEntries: [] };
     }
 
     const good = log.filter(e => e.sentiment === 'good').length;
@@ -1138,13 +1075,7 @@ The response must match this exact structure:
     const draftCopied = log.filter(e => e.draftCopied).length;
     const templateFallback = log.filter(e => e.templateFallback).length;
 
-    // Template recommendation counts
-    const templateCounts = {};
-    log.forEach(e => {
-      if (e.recommendedTemplate) {
-        templateCounts[e.recommendedTemplate] = (templateCounts[e.recommendedTemplate] || 0) + 1;
-      }
-    });
+    // (Template counts removed in v3.0 — replaced by draft rate tracking)
 
     // Plugin analysis counts
     const pluginCounts = {};
@@ -1169,7 +1100,6 @@ The response must match this exact structure:
       draftRate: total > 0 ? Math.round((draftGenerated / total) * 100) : 0,
       draftCopyRate: draftGenerated > 0 ? Math.round((draftCopied / draftGenerated) * 100) : 0,
       templateFallbackRate: total > 0 ? Math.round((templateFallback / total) * 100) : 0,
-      templateCounts,
       pluginCounts: Object.fromEntries(sortedPlugins),
       recentEntries: log.slice(-50).reverse(),
     };
@@ -1379,7 +1309,7 @@ The response must match this exact structure:
     if (pluginSlug) {
       return {
         slug: pluginSlug,
-        reviewUrl: `https://wordpress.org/plugins/${pluginSlug}/#reviews`,
+        reviewUrl: `https://wordpress.org/support/plugin/${pluginSlug}/reviews/#new-post`,
         pluginUrl: `https://wordpress.org/plugins/${pluginSlug}/`,
       };
     }
@@ -1432,7 +1362,6 @@ The response must match this exact structure:
   function partialJsonRecovery(raw) {
     const sentimentMatch = raw.match(/"sentiment"\s*:\s*"(good|neutral|bad|inconclusive)"/i);
     const confidenceMatch = raw.match(/"confidence"\s*:\s*([\d.]+)/);
-    const templateMatch = raw.match(/"primaryTemplate"\s*:\s*"([A-G])"/i);
     const reasoningMatch = raw.match(/"reasoning"\s*:\s*"([^"]{1,500})"/);
 
     if (!sentimentMatch) return null; // Can't recover without sentiment
@@ -1440,8 +1369,6 @@ The response must match this exact structure:
     return {
       sentiment: sentimentMatch[1].toLowerCase(),
       confidence: confidenceMatch ? parseFloat(confidenceMatch[1]) : 0.5,
-      primaryTemplate: templateMatch ? templateMatch[1].toUpperCase() : 'E',
-      secondaryTemplate: null,
       reasoning: reasoningMatch ? reasoningMatch[1] : 'Partial recovery — AI response was malformed.',
       signals: [],
       summary: null,
@@ -1632,9 +1559,9 @@ The response must match this exact structure:
     overlay.id = 'wrh-overlay';
 
     const sentimentMap = {
-      good:  { label: '✅ Good Experience — Ask for a Review', css: 'good' },
-      neutral: { label: '🤔 Grey Area — Use Your Judgment', css: 'neutral' },
-      bad:   { label: '❌ Not a Good Experience — Don\'t Ask', css: 'bad' },
+      good:  { label: '✅ Good Experience — Review Request Drafted', css: 'good' },
+      neutral: { label: '🤔 Grey Area — Softer Review Request Drafted', css: 'neutral' },
+      bad:   { label: '❌ Not Satisfied — Close Without Review Ask', css: 'bad' },
       inconclusive: { label: '⚠️ Inconclusive — Review Manually', css: 'inconclusive' },
     };
     const sentInfo = sentimentMap[aiResult.sentiment] || sentimentMap.inconclusive;
@@ -1651,7 +1578,7 @@ The response must match this exact structure:
     const pluginInfo = detectPluginReviewLink();
     const reviewLink = pluginInfo ? pluginInfo.reviewUrl : '[REVIEW_LINK]';
 
-    // Substitute placeholders in draft or template text
+    // Substitute placeholders in draft text
     const substitutePlaceholders = (text) => {
       let out = text;
       if (thread.author) out = out.replace(/\[NAME\]/g, thread.author);
@@ -1659,14 +1586,7 @@ The response must match this exact structure:
       return out;
     };
 
-    const getTemplateText = (key) => {
-      if (!TEMPLATES[key]) return '';
-      return substitutePlaceholders(TEMPLATES[key].text);
-    };
-
-    const isNeutral = aiResult.sentiment === 'neutral';
-    const pt = aiResult.primaryTemplate || 'E';
-    const st = aiResult.secondaryTemplate || null;
+    const isBad = aiResult.sentiment === 'bad' || aiResult.sentiment === 'inconclusive';
     const priorReviewFound = reviewCheck && reviewCheck.found;
     const modelName = aiResult.modelUsed || getModel();
 
@@ -1704,7 +1624,7 @@ The response must match this exact structure:
       reviewCheckHTML = `
         <div style="background: #fef2f2; border: 1px solid #f5c6c6; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 16px;" aria-hidden="true">⚠️</span>
-          <span><strong>This user has already reviewed ${escapeHTML(pluginInfo ? pluginInfo.slug : 'this plugin')}.</strong> Draft hidden — use Template E (Graceful Close) below.</span>
+          <span><strong>This user has already reviewed ${escapeHTML(pluginInfo ? pluginInfo.slug : 'this plugin')}.</strong> Use the graceful close template below instead.</span>
         </div>
       `;
     } else if (reviewCheck && !reviewCheck.found && !reviewCheck.error) {
@@ -1729,20 +1649,18 @@ The response must match this exact structure:
         <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: flex-start; gap: 8px;">
           <span style="font-size: 16px; flex-shrink: 0;" aria-hidden="true">🔧</span>
           <div>
-            <strong>Thread may still be in progress.</strong> The last reply is from ${lastResponder} and no resolution has been confirmed yet. You can wait for a response, or use Template F (Delayed Follow-Up) to check in.
-            <div style="margin-top: 8px;">
-              <button class="wrh-copy-btn secondary" data-template="F" style="font-size: 12px; padding: 4px 10px;">📋 Copy Template F</button>
-            </div>
+            <strong>Thread may still be in progress.</strong> The last reply is from ${lastResponder} and no resolution has been confirmed yet. Consider waiting for a response before closing.
           </div>
         </div>
       `;
     }
 
-    // ── 4. AI-drafted message section ──
+    // ── 4. AI-drafted message section (good/neutral only) ──
     let draftSectionHTML = '';
     const draftText = aiResult.draftAvailable ? substitutePlaceholders(aiResult.draftedMessage) : '';
+    const showDraft = aiResult.draftAvailable && !isBad && !priorReviewFound;
 
-    if (aiResult.draftAvailable && !priorReviewFound) {
+    if (showDraft) {
       // Check for unresolved placeholders
       const hasPlaceholders = /\[REVIEW_LINK\]|\[NAME\]/.test(draftText);
       const placeholderWarning = hasPlaceholders
@@ -1751,7 +1669,7 @@ The response must match this exact structure:
 
       draftSectionHTML = `
         <div class="wrh-draft-section">
-          <div class="wrh-label">✍️ AI-DRAFTED MESSAGE</div>
+          <div class="wrh-label">✍️ AI-DRAFTED REVIEW REQUEST</div>
           <textarea class="wrh-draft-textarea" id="wrh-draft-textarea" rows="6"
             aria-label="AI-drafted review request message">${escapeHTML(draftText)}</textarea>
           ${placeholderWarning}
@@ -1772,7 +1690,7 @@ The response must match this exact structure:
         </div>
         <div class="wrh-collapsed-draft" id="wrh-collapsed-draft">
           <div class="wrh-draft-section">
-            <div class="wrh-label">✍️ AI-DRAFTED MESSAGE</div>
+            <div class="wrh-label">✍️ AI-DRAFTED REVIEW REQUEST</div>
             <textarea class="wrh-draft-textarea" id="wrh-draft-textarea" rows="6"
               aria-label="AI-drafted review request message">${escapeHTML(draftText)}</textarea>
             ${placeholderWarning}
@@ -1780,29 +1698,42 @@ The response must match this exact structure:
           </div>
         </div>
       `;
-    } else {
-      // No draft available — amber fallback
-      draftSectionHTML = `
-        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
-          <span aria-hidden="true">⚠️</span>
-          <span>AI draft unavailable — use a template below.</span>
+    }
+
+    // ── 5. Bad sentiment / no draft — show graceful close template ──
+    let fallbackTemplateHTML = '';
+    if (isBad || priorReviewFound) {
+      const fallbackText = substitutePlaceholders(FALLBACK_TEMPLATE.text);
+      const actionLabel = isBad
+        ? 'The customer does not appear satisfied. Close gracefully without asking for a review.'
+        : 'This user already reviewed — close gracefully without asking again.';
+
+      fallbackTemplateHTML = `
+        <div style="background: #fef2f2; border: 1px solid #f5c6c6; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: flex-start; gap: 8px;">
+          <span style="font-size: 16px;" aria-hidden="true">🚫</span>
+          <span>${escapeHTML(actionLabel)}</span>
+        </div>
+        <div class="wrh-draft-section">
+          <div class="wrh-label">📋 GRACEFUL CLOSE TEMPLATE</div>
+          <textarea class="wrh-draft-textarea" id="wrh-fallback-textarea" rows="6"
+            aria-label="Graceful close template">${escapeHTML(fallbackText)}</textarea>
+          <button class="wrh-copy-btn" id="wrh-copy-fallback" aria-label="Copy graceful close template to clipboard">📋 Copy Close Template</button>
         </div>
       `;
     }
 
-    // ── 5. Grey area guidance (neutral sentiment) ──
+    // ── 6. Grey area guidance (neutral sentiment) ──
     let greyGuidanceHTML = '';
-    if (isNeutral) {
+    if (aiResult.sentiment === 'neutral' && !priorReviewFound) {
       greyGuidanceHTML = `
         <div class="wrh-grey-guidance">
           <strong>🤔 This one's your call</strong>
-          A solution was provided and accepted, but the tone is lukewarm — not clearly positive or negative.
-          Lean toward asking with a softer template below. If something still feels off, skip it and close gracefully.
+          The tone is lukewarm — not clearly positive or negative. The AI drafted a softer review request above. If something still feels off, you can close gracefully instead.
         </div>
       `;
     }
 
-    // ── 6. Reasoning + signals (escaped) ──
+    // ── 7. Reasoning + signals (escaped) ──
     const reasoningHTML = aiResult.reasoning ? `
       <div class="wrh-label">💡 AI REASONING</div>
       <div class="wrh-reasoning">${escapeHTML(aiResult.reasoning)}</div>
@@ -1815,50 +1746,13 @@ The response must match this exact structure:
       </li>
     `).join('');
 
-    // ── 7. Template cards ──
-    let templateCardsHTML = '';
-    const templateLabel = isNeutral ? 'SUGGESTED SOFTER TEMPLATE' : 'PRE-WRITTEN TEMPLATES';
-
-    templateCardsHTML += `
-      <hr class="wrh-divider">
-      <div class="wrh-label">${templateLabel}</div>
-      <div class="wrh-template-card">
-        <h3>Template ${escapeHTML(pt)} — ${TEMPLATES[pt] ? escapeHTML(TEMPLATES[pt].name) : 'Unknown'}</h3>
-        <p>${TEMPLATES[pt] ? escapeHTML(TEMPLATES[pt].description) : ''}</p>
-        <button class="wrh-copy-btn secondary" data-template="${escapeHTML(pt)}">📋 Copy Template ${escapeHTML(pt)}</button>
-      </div>
-    `;
-
-    if (!isNeutral && st && TEMPLATES[st]) {
-      templateCardsHTML += `
-        <div class="wrh-label" style="margin-top: 12px;">ALTERNATIVE TEMPLATE</div>
-        <div class="wrh-template-card wrh-secondary">
-          <h3>Template ${escapeHTML(st)} — ${escapeHTML(TEMPLATES[st].name)}</h3>
-          <p>${escapeHTML(TEMPLATES[st].description)}</p>
-          <button class="wrh-copy-btn secondary" data-template="${escapeHTML(st)}">📋 Copy Template ${escapeHTML(st)}</button>
-        </div>
-      `;
-    }
-
-    if (isNeutral) {
-      templateCardsHTML += `
-        <hr class="wrh-divider">
-        <div class="wrh-label">PREFER TO SKIP?</div>
-        <div class="wrh-skip-card">
-          <h3>Template E — ${escapeHTML(TEMPLATES.E.name)}</h3>
-          <p>Still unsure? Close gracefully instead. No review ask.</p>
-          <button class="wrh-copy-btn secondary" data-template="E">📋 Copy Template E (Skip)</button>
-        </div>
-      `;
-    }
-
     // ── 8. Partial recovery warning ──
     let partialRecoveryHTML = '';
     if (aiResult.partialRecovery) {
       partialRecoveryHTML = `
         <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
           <span aria-hidden="true">⚠️</span>
-          <span>AI returned a malformed response. Sentiment and template were recovered, but the draft and summary are unavailable.</span>
+          <span>AI returned a malformed response. Sentiment was recovered, but the draft and summary are unavailable.</span>
         </div>
       `;
     }
@@ -1895,6 +1789,7 @@ The response must match this exact structure:
           ${greyGuidanceHTML}
 
           ${draftSectionHTML}
+          ${fallbackTemplateHTML}
 
           ${reasoningHTML}
 
@@ -1902,8 +1797,6 @@ The response must match this exact structure:
             <div class="wrh-label">SIGNALS DETECTED</div>
             <ul class="wrh-signals">${signalsHTML}</ul>
           ` : ''}
-
-          ${templateCardsHTML}
 
           <div class="wrh-powered-by">
             Powered by Groq (${escapeHTML(modelName)}) · Analysis runs on-demand only
@@ -1922,7 +1815,7 @@ The response must match this exact structure:
     const closeBtn = overlay.querySelector('#wrh-close-btn');
     if (closeBtn) closeBtn.focus();
 
-    // Collapsed draft toggle
+    // Collapsed draft toggle (prior review case)
     const toggleLink = overlay.querySelector('#wrh-toggle-draft');
     const collapsedDraft = overlay.querySelector('#wrh-collapsed-draft');
     if (toggleLink && collapsedDraft) {
@@ -1946,7 +1839,6 @@ The response must match this exact structure:
         const currentText = textarea ? textarea.value : originalDraft;
         copyToClipboard(currentText);
 
-        // Detect if draft was edited (trim to prevent whitespace-only false positives)
         const wasEdited = currentText.trim() !== originalDraft.trim();
 
         if (logEntryId) {
@@ -1968,32 +1860,32 @@ The response must match this exact structure:
       });
     }
 
-    // Template copy buttons
-    overlay.querySelectorAll('.wrh-copy-btn[data-template]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const key = btn.dataset.template;
-        const text = getTemplateText(key);
-        copyToClipboard(text);
+    // Copy Fallback template button
+    const copyFallbackBtn = overlay.querySelector('#wrh-copy-fallback');
+    if (copyFallbackBtn) {
+      copyFallbackBtn.addEventListener('click', () => {
+        const textarea = overlay.querySelector('#wrh-fallback-textarea');
+        const currentText = textarea ? textarea.value : substitutePlaceholders(FALLBACK_TEMPLATE.text);
+        copyToClipboard(currentText);
 
         if (logEntryId) {
           updateLogEntry(logEntryId, {
             templateCopied: true,
-            templateCopiedKey: key,
+            templateCopiedKey: 'graceful-close',
             templateFallback: true,
           });
         }
 
-        const originalLabel = btn.textContent;
-        btn.textContent = '✅ Copied!';
-        btn.classList.add('copied');
+        copyFallbackBtn.textContent = '✅ Copied!';
+        copyFallbackBtn.classList.add('copied');
         const liveRegion = overlay.querySelector('#wrh-live-region');
-        if (liveRegion) liveRegion.textContent = `Template ${key} copied to clipboard`;
+        if (liveRegion) liveRegion.textContent = 'Close template copied to clipboard';
         setTimeout(() => {
-          btn.textContent = originalLabel;
-          btn.classList.remove('copied');
+          copyFallbackBtn.textContent = '📋 Copy Close Template';
+          copyFallbackBtn.classList.remove('copied');
         }, 2000);
       });
-    });
+    }
   }
 
   // ──────────────────────────────────────────────
@@ -2020,13 +1912,6 @@ The response must match this exact structure:
       </div>
     `;
 
-    // Build template breakdown
-    const templateKeys = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
-    const templateBreakdownHTML = templateKeys.map(k => {
-      const count = stats.templateCounts[k] || 0;
-      return count > 0 ? `<span class="wrh-stat"><strong>${count}×</strong> Template ${k}</span>` : '';
-    }).filter(Boolean).join('') || '<span class="wrh-stat" style="color: #a0a5aa;">No data yet</span>';
-
     // Build top plugins
     const pluginEntries = Object.entries(stats.pluginCounts);
     const topPluginsHTML = pluginEntries.length > 0
@@ -2041,8 +1926,7 @@ The response must match this exact structure:
       const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
       const sentimentEmoji = e.sentiment === 'good' ? '✅' : e.sentiment === 'neutral' ? '🤔' : e.sentiment === 'bad' ? '❌' : '⚠️';
-      const copyEmoji = e.templateCopied ? '📋' : '—';
-      // Extract thread slug from URL for display
+      const actionEmoji = e.draftCopied ? '✍️' : e.templateFallback ? '📋' : '—';
       const urlParts = e.threadUrl.split('/');
       const threadSlug = urlParts[urlParts.length - 2] || urlParts[urlParts.length - 1] || 'thread';
       const shortSlug = threadSlug.length > 30 ? threadSlug.slice(0, 27) + '...' : threadSlug;
@@ -2052,8 +1936,7 @@ The response must match this exact structure:
         <td><a href="${e.threadUrl}" target="_blank" title="${threadSlug}">${shortSlug}</a></td>
         <td>${e.pluginSlug || '—'}</td>
         <td>${sentimentEmoji}</td>
-        <td>${e.recommendedTemplate || '—'}</td>
-        <td>${copyEmoji} ${e.templateCopiedKey || ''}</td>
+        <td>${actionEmoji}</td>
       </tr>`;
     }).join('');
 
@@ -2101,11 +1984,6 @@ The response must match this exact structure:
 
             <hr class="wrh-divider">
 
-            <div class="wrh-label">MOST RECOMMENDED TEMPLATES</div>
-            <div class="wrh-stats" style="margin-bottom: 18px;">
-              ${templateBreakdownHTML}
-            </div>
-
             <div class="wrh-label">TOP ANALYZED PLUGINS</div>
             <div class="wrh-stats" style="margin-bottom: 18px; flex-wrap: wrap;">
               ${topPluginsHTML}
@@ -2122,12 +2000,11 @@ The response must match this exact structure:
                     <th>Thread</th>
                     <th>Plugin</th>
                     <th>Result</th>
-                    <th>Template</th>
-                    <th>Copied</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${logRows || '<tr><td colspan="6" style="text-align: center; color: #a0a5aa;">No entries</td></tr>'}
+                  ${logRows || '<tr><td colspan="5" style="text-align: center; color: #a0a5aa;">No entries</td></tr>'}
                 </tbody>
               </table>
             </div>
@@ -2322,18 +2199,11 @@ The response must match this exact structure:
           reviewCheckPromise,
         ]);
 
-        // 7. Override to Template E if user already left a review
-        if (reviewCheck && reviewCheck.found) {
-          aiResult.primaryTemplate = 'E';
-          aiResult.secondaryTemplate = null;
-        }
-
-        // 8. Log analytics (no PII — just URL, plugin, sentiment, template)
+        // 7. Log analytics (no PII — just URL, plugin, sentiment)
         const logEntryId = addLogEntry({
           pluginSlug: pluginInfo ? pluginInfo.slug : null,
           sentiment: aiResult.sentiment,
           confidence: aiResult.confidence,
-          recommendedTemplate: aiResult.primaryTemplate,
           priorReviewFound: reviewCheck ? reviewCheck.found : null,
           troubleshootingDetected: troubleshootingCheck.isTroubleshooting,
           lastReplyIsHC: troubleshootingCheck.signals.lastReplyIsHC,
