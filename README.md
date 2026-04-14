@@ -1,18 +1,19 @@
 # WPorg Review Helper
 
-A browser tool that analyzes WordPress.org support threads using AI and recommends review request templates based on customer sentiment.
+A browser tool that analyzes WordPress.org support threads using AI, drafts personalized review request messages, and recommends templates based on customer sentiment.
 
-Built for Happiness Engineers working WooCommerce (and other plugin) support on the WordPress.org forums. It helps you decide **when to ask for a plugin review** and **which template to use**, based on how the support interaction went.
+Built for Happiness Engineers working WooCommerce (and other plugin) support on the WordPress.org forums. It helps you decide **when to ask for a plugin review**, **drafts a personalized message**, and falls back to **pre-written templates** when needed.
 
 ## How It Works
 
 When you click the **"📊 Analyze Thread"** button on any WordPress.org support topic page, the script:
 
 1. **Parses the thread** — identifies the original poster vs. support agents, counts replies, measures thread duration
-2. **Sends the conversation to Groq AI (Llama 3.1)** — along with a detailed decision framework covering positive, neutral, and negative signals
-3. **Checks for prior reviews** — simultaneously scrapes the plugin's review pages to see if the user has already left a review (runs in parallel with the AI call — no extra wait)
-4. **Displays the AI's assessment** — sentiment (good/neutral/bad), confidence score, reasoning, detected signals, and the recommended template
-5. **Lets you copy the template** — one click copies the recommended text to your clipboard, ready to paste
+2. **Opens the panel immediately** — with a loading skeleton so you see progress right away
+3. **Sends the conversation to Groq AI** — using your chosen model (default: Llama 3.3-70B) with a detailed decision framework
+4. **Checks for prior reviews** — simultaneously scrapes the plugin's review pages to see if the user has already left a review (runs in parallel with the AI call)
+5. **Displays results** — thread summary, sentiment, confidence, an **editable AI-drafted message** in a textarea, reasoning, signals, and fallback templates
+6. **Lets you copy the draft or a template** — one click copies text to your clipboard, ready to paste. Edit the draft inline if you want to personalize it further.
 
 Thread content is sent to Groq's API for analysis. Your API key is stored locally in Tampermonkey. Analytics data (no PII) is stored locally for your own tracking.
 
@@ -79,14 +80,15 @@ If you're viewing this on GitHub, you can click the raw link for the `.user.js` 
 2. Click the **"📊 Analyze Thread"** button (bottom-right corner)
 3. Wait a few seconds for the AI analysis
 4. Review the results panel:
-   - **Prior review check** — ⚠️ if user already reviewed, ✅ if clear (or skipped if plugin wasn't detected)
+   - **Thread summary** — one-line overview of the issue and resolution
    - **Sentiment result** — Good ✅, Grey Area 🤔, or Bad ❌
-   - **Confidence score** — how certain the AI is about its assessment
-   - **AI reasoning** — a one-line explanation of why it reached this conclusion
-   - **Signals detected** — specific things the AI noticed in the conversation
-   - **Recommended template** — with a copy button (auto-overridden to Template E if prior review was found)
-5. Click **"📋 Copy Template"** to copy the text to your clipboard
-6. Paste into the reply box, replace `[REVIEW_LINK]` with the plugin's review URL (auto-detected when possible), and send
+   - **Confidence score** — how certain the AI is
+   - **Prior review check** — ⚠️ if user already reviewed, ✅ if clear
+   - **AI-drafted message** — editable textarea with a personalized review request (auto-fills author name and review link)
+   - **AI reasoning + signals** — why it reached this conclusion
+   - **Fallback templates** — pre-written options below the draft
+5. Edit the draft if needed, then click **"📋 Copy Draft"** (or copy a template instead)
+6. Paste into the reply box and send
 7. Click the **"📈"** button (bottom-right) anytime to view your analytics dashboard
 
 ## Analytics Dashboard
@@ -112,9 +114,17 @@ The built-in analytics dashboard tracks your usage locally — no data is sent a
 - CSV export for external analysis
 - Data cap of 1,000 entries (oldest entries rotate out)
 
-## Cost
+## Model Selection
 
-The script uses Groq's free tier with the Llama 3.1-8b-instant model — **completely free**, no credit card required. The free tier allows up to 30 requests per minute and 14,400 requests per day, which is more than enough for regular support work.
+Choose your AI model in ⚙️ Settings:
+
+| Model | Speed | Quality | Best for |
+|---|---|---|---|
+| **llama-3.3-70b-versatile** (default) | ~8s | Best drafts, most accurate sentiment | Daily use |
+| llama-3.1-8b-instant | ~3s | Good enough for short threads | Quick checks |
+| gemma2-9b-it | ~5s | Alternative style | Variety |
+
+All models run on Groq's free tier — **completely free**, no credit card required. The free tier allows up to 30 requests per minute and 14,400 requests per day.
 
 ## Privacy & Security
 
@@ -138,17 +148,23 @@ wporg-review-helper/
 
 ## Roadmap
 
-### Phase 1: Tampermonkey Script (Current)
+### Phase 1: Tampermonkey Script (Current — v3.0)
 - [x] Thread parsing and author detection
-- [x] AI-powered sentiment analysis via Groq (Llama 3.1) — free tier, no cost
+- [x] AI-powered sentiment analysis via Groq — free tier, no cost
+- [x] AI-drafted personalized review request messages (v3.0)
+- [x] Thread summary — one-line issue + resolution overview (v3.0)
+- [x] Model selector — choose between 3 Groq models (v3.0)
 - [x] Template recommendation with confidence scoring
-- [x] Copy-to-clipboard functionality
-- [x] Clean overlay UI with AI reasoning display
+- [x] Editable draft textarea with copy button (v3.0)
+- [x] Copy-to-clipboard functionality (draft + templates)
+- [x] Clean overlay UI with loading skeleton (v3.0)
 - [x] Secure API key management
 - [x] Auto-detect plugin review link from forum page
 - [x] Local analytics dashboard with CSV export
+- [x] AI Draft Rate tracking in analytics (v3.0)
 - [x] Grey area / neutral sentiment detection with HC judgment path
 - [x] Prior review check — auto-detect if user already reviewed the plugin
+- [x] WCAG 2.1 AA accessibility — dialog roles, focus management, screen reader support (v3.0)
 
 ### Phase 2: Chrome Extension (Planned)
 - [ ] Sidebar panel instead of overlay

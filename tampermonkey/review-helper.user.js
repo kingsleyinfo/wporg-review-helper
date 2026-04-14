@@ -3,8 +3,8 @@
 // @namespace    https://github.com/Kingsleyinfo/wporg-review-helper
 // @updateURL    https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
-// @version      2.7.0
-// @description  Analyzes WordPress.org support threads using AI and recommends review request templates based on customer sentiment.
+// @version      3.0.0
+// @description  Analyzes WordPress.org support threads using AI, drafts personalized review request messages, and recommends templates based on customer sentiment.
 // @author       Kay (Kingsleyinfo)
 // @match        https://wordpress.org/support/topic/*
 // @grant        GM_setClipboard
@@ -24,7 +24,6 @@
   // 1. CONFIGURATION
   // ──────────────────────────────────────────────
 
-  const GROQ_MODEL = 'llama-3.1-8b-instant';
   const API_KEY_STORAGE = 'wrh_groq_api_key';
   const ANALYTICS_STORAGE = 'wrh_analytics_log';
   const ANALYTICS_MAX_ENTRIES = 1000;
@@ -75,7 +74,15 @@
   // 3. SYSTEM PROMPT FOR AI ANALYSIS
   // ──────────────────────────────────────────────
 
-  const SYSTEM_PROMPT = `You are a sentiment analysis assistant for WordPress.org plugin support threads. Your job is to analyze a support conversation and determine:
+  const SYSTEM_PROMPT = buildSystemPrompt();
+
+  function buildSystemPrompt() {
+    // Build template tone examples from TEMPLATES constants
+    const toneExamples = Object.entries(TEMPLATES).map(([key, t]) =>
+      `Template ${key} (${t.name}): "${t.text.slice(0, 120)}..."`
+    ).join('\n');
+
+    return `You are a sentiment analysis and message drafting assistant for WordPress.org plugin support threads. Your job is to analyze a support conversation and determine:
 
 1. Whether the customer had a GOOD, NEUTRAL, or BAD experience.
 2. Which response template (A–F) the support agent should use.
@@ -153,8 +160,27 @@ Follow this decision tree strictly:
 - Consider the full arc of the conversation, not just individual phrases
 - When in doubt between good and neutral, choose NEUTRAL — it's safer to let the HC decide
 
+## Message Drafting
+
+After analyzing sentiment, draft a personalized message for the support agent to send. The message should:
+- Match the tone of the recommended template (see tone examples below)
+- Use [NAME] as a placeholder for the customer's name
+- For good/neutral sentiment: include [REVIEW_LINK] as a placeholder for the plugin review URL
+- For bad sentiment: do NOT ask for a review. Close gracefully instead.
+- Be natural, warm, and specific to the conversation (reference what was discussed)
+- Be 2-4 sentences, similar in length to the template examples
+
+## Tone Examples (from pre-written templates)
+${toneExamples}
+
+## Thread Summary
+
+Provide a one-line summary of the thread: what was the issue and how was it resolved (or not).
+Example: "User had WooCommerce checkout error, resolved by disabling conflicting plugin."
+
 ## Response Format
-You MUST respond with valid JSON only, no markdown formatting, no code blocks. The response must match this exact structure:
+You MUST respond with valid JSON only. No markdown formatting, no code blocks, no extra text.
+The response must match this exact structure:
 {
   "sentiment": "good" | "neutral" | "bad",
   "confidence": 0.0 to 1.0,
@@ -163,8 +189,11 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
   "signals": [
     { "type": "positive" | "negative" | "neutral" | "info", "text": "description of signal" }
   ],
-  "reasoning": "One sentence summary of why you reached this conclusion"
+  "reasoning": "One sentence summary of why you reached this conclusion",
+  "summary": "One-line thread summary: issue + resolution",
+  "draftedMessage": "The personalized message for the agent to send, using [NAME] and [REVIEW_LINK] placeholders"
 }`;
+  }
 
   // ──────────────────────────────────────────────
   // 4. STYLES
@@ -671,11 +700,217 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     .wrh-stats-btn.primary:hover { background: #005a87; }
     .wrh-stats-btn.danger { color: #b91c1c; border-color: #f5c6c6; }
     .wrh-stats-btn.danger:hover { background: #fef2f2; }
+
+    /* v3.0: Draft section (tinted background) */
+    .wrh-draft-section {
+      background: #f6f8fa;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 18px;
+    }
+    .wrh-draft-textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      font-size: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      padding: 12px;
+      border: 1px solid #c3c4c7;
+      border-radius: 6px;
+      box-sizing: border-box;
+      line-height: 1.5;
+      color: #1e1e1e;
+    }
+    .wrh-draft-textarea:focus {
+      border-color: #0073aa;
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(0,115,170,0.2);
+    }
+
+    /* v3.0: Placeholder warning */
+    .wrh-placeholder-warning {
+      font-size: 12px;
+      color: #92400e;
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* v3.0: Loading skeleton */
+    .wrh-loading {
+      text-align: center;
+      padding: 40px 20px;
+      color: #757575;
+    }
+    .wrh-loading-text {
+      font-size: 15px;
+      margin-top: 12px;
+      animation: wrh-pulse 1.5s ease-in-out infinite;
+    }
+    .wrh-loading-spinner {
+      font-size: 32px;
+    }
+    @keyframes wrh-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* v3.0: Collapsed draft toggle */
+    .wrh-collapsed-draft {
+      max-height: 0;
+      overflow: hidden;
+      opacity: 0;
+      transition: max-height 0.3s ease, opacity 0.3s ease;
+    }
+    .wrh-collapsed-draft.expanded {
+      max-height: 400px;
+      opacity: 1;
+    }
+    .wrh-toggle-link {
+      background: none;
+      border: none;
+      color: #0073aa;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 0;
+      margin-top: 6px;
+      text-decoration: underline;
+    }
+    .wrh-toggle-link:hover { color: #005a87; }
+
+    /* v3.0: Template fallback copy button (secondary) */
+    .wrh-copy-btn.secondary {
+      background: #50575e;
+    }
+    .wrh-copy-btn.secondary:hover { background: #3c434a; }
+
+    /* v3.0: Summary banner */
+    .wrh-summary-banner {
+      background: #f0f6fc;
+      border: 1px solid #c8d6e5;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 18px;
+      font-size: 13px;
+      color: #1e1e1e;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      line-height: 1.5;
+    }
+
+    /* v3.0: Context length warning */
+    .wrh-context-warning {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      color: #92400e;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .wrh-context-warning button {
+      background: none;
+      border: none;
+      color: #92400e;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 0 4px;
+      flex-shrink: 0;
+    }
+
+    /* Focus styles for accessibility */
+    .wrh-copy-btn:focus-visible,
+    .wrh-save-btn:focus-visible,
+    .wrh-stats-btn:focus-visible,
+    .wrh-toggle-link:focus-visible,
+    #wrh-close-btn:focus-visible {
+      outline: 2px solid #0073aa;
+      outline-offset: 2px;
+    }
+
+    /* Live region for screen reader announcements */
+    .wrh-sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      white-space: nowrap;
+      border: 0;
+    }
   `);
 
   // ──────────────────────────────────────────────
-  // 5. API KEY MANAGEMENT
+  // 5. SHARED UTILITIES & API KEY MANAGEMENT
   // ──────────────────────────────────────────────
+
+  /**
+   * Escapes HTML special characters to prevent XSS when rendering
+   * AI response fields via innerHTML.
+   */
+  function escapeHTML(str) {
+    if (str == null) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  /**
+   * Sets up standard overlay dismiss behavior: click backdrop, Escape key, close button.
+   * @param {HTMLElement} overlay - The overlay element (#wrh-overlay)
+   */
+  function setupOverlayDismiss(overlay) {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    const closeBtn = overlay.querySelector('#wrh-close-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => overlay.remove());
+    }
+    const escHandler = (e) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', escHandler);
+      }
+    };
+    document.addEventListener('keydown', escHandler);
+  }
+
+  /**
+   * Copies text to clipboard with 3-tier fallback:
+   * GM_setClipboard → navigator.clipboard → textarea+execCommand
+   */
+  function copyToClipboard(text) {
+    try {
+      if (typeof GM_setClipboard === 'function') {
+        GM_setClipboard(text, 'text');
+        return;
+      }
+    } catch (err) { /* fall through */ }
+    try {
+      navigator.clipboard.writeText(text);
+      return;
+    } catch (err) { /* fall through */ }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
 
   function getApiKey() {
     return GM_getValue(API_KEY_STORAGE, '');
@@ -683,6 +918,14 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
 
   function setApiKey(key) {
     GM_setValue(API_KEY_STORAGE, key.trim());
+  }
+
+  function getModel() {
+    return GM_getValue('wrh_groq_model', 'llama-3.3-70b-versatile');
+  }
+
+  function setModel(model) {
+    GM_setValue('wrh_groq_model', model.trim());
   }
 
   function showSettingsDialog() {
@@ -694,35 +937,44 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
 
     const currentKey = getApiKey();
     const maskedKey = currentKey
-      ? currentKey.slice(0, 7) + '•'.repeat(20) + currentKey.slice(-4)
+      ? escapeHTML(currentKey.slice(0, 7) + '•'.repeat(20) + currentKey.slice(-4))
       : '';
+    const currentModel = getModel();
 
     overlay.innerHTML = `
-      <div id="wrh-panel" style="width: 440px;">
+      <div id="wrh-panel" style="width: 440px;" role="dialog" aria-modal="true" aria-labelledby="wrh-settings-title">
         <div id="wrh-panel-header">
-          <h2>⚙️ Review Helper Settings</h2>
+          <h2 id="wrh-settings-title">⚙️ Review Helper Settings</h2>
           <button id="wrh-close-btn" title="Close">&times;</button>
         </div>
         <div class="wrh-settings-body">
           <label for="wrh-api-key">Groq API Key</label>
-          <input type="password" id="wrh-api-key" placeholder="gsk_..." value="${currentKey}" />
+          <input type="password" id="wrh-api-key" placeholder="gsk_..." />
           <div class="wrh-hint">
             Your key is stored locally in Tampermonkey and never sent anywhere except Groq's API.
             Get a free key at <a href="https://console.groq.com/keys" target="_blank" style="color: #0073aa;">console.groq.com/keys</a>
           </div>
           ${currentKey ? `<div class="wrh-hint" style="margin-top: 8px;">Current key: <code>${maskedKey}</code></div>` : ''}
-          <button class="wrh-save-btn" id="wrh-save-key">💾 Save Key</button>
+
+          <label for="wrh-model" style="margin-top: 16px;">AI Model</label>
+          <select id="wrh-model" style="width: 100%; padding: 10px 12px; border: 1px solid #c3c4c7; border-radius: 6px; font-size: 14px; box-sizing: border-box; background: #fff;">
+            <option value="llama-3.3-70b-versatile" ${currentModel === 'llama-3.3-70b-versatile' ? 'selected' : ''}>llama-3.3-70b-versatile (recommended)</option>
+            <option value="llama-3.1-8b-instant" ${currentModel === 'llama-3.1-8b-instant' ? 'selected' : ''}>llama-3.1-8b-instant (faster)</option>
+            <option value="gemma2-9b-it" ${currentModel === 'gemma2-9b-it' ? 'selected' : ''}>gemma2-9b-it</option>
+          </select>
+          <div class="wrh-hint">The 70B model writes better drafts. The 8B model is faster but may struggle with long threads.</div>
+
+          <button class="wrh-save-btn" id="wrh-save-key">💾 Save Settings</button>
         </div>
       </div>
     `;
 
     document.body.appendChild(overlay);
 
-    // Event listeners
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.remove();
-    });
-    overlay.querySelector('#wrh-close-btn').addEventListener('click', () => overlay.remove());
+    // Set key value via property (not attribute) to avoid HTML injection
+    overlay.querySelector('#wrh-api-key').value = currentKey;
+
+    setupOverlayDismiss(overlay);
 
     overlay.querySelector('#wrh-save-key').addEventListener('click', () => {
       const key = overlay.querySelector('#wrh-api-key').value.trim();
@@ -735,24 +987,16 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
         return;
       }
       setApiKey(key);
+      setModel(overlay.querySelector('#wrh-model').value);
       overlay.remove();
       // Show brief confirmation
       const fab = document.getElementById('wrh-fab');
       if (fab) {
         const origText = fab.innerHTML;
-        fab.innerHTML = '✅ Key Saved!';
+        fab.innerHTML = '✅ Settings Saved!';
         setTimeout(() => { fab.innerHTML = origText; }, 1500);
       }
     });
-
-    // Escape key
-    const escHandler = (e) => {
-      if (e.key === 'Escape') {
-        overlay.remove();
-        document.removeEventListener('keydown', escHandler);
-      }
-    };
-    document.addEventListener('keydown', escHandler);
   }
 
   // Register Tampermonkey menu commands
@@ -808,6 +1052,12 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       lastReplyIsHC: entry.lastReplyIsHC || false,
       templateCopied: false,
       templateCopiedKey: null,
+      // v3.0 fields
+      draftGenerated: entry.draftGenerated || false,
+      draftCopied: false,
+      draftEdited: false,
+      templateFallback: false,
+      modelUsed: entry.modelUsed || null,
     };
     log.push(logEntry);
 
@@ -844,7 +1094,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
    */
   function exportAnalyticsCSV() {
     const log = getAnalyticsLog();
-    const headers = ['Timestamp', 'Thread URL', 'Plugin Slug', 'Sentiment', 'Confidence', 'Recommended Template', 'Prior Review Found', 'Troubleshooting Detected', 'Last Reply Is HC', 'Template Copied', 'Template Copied Key'];
+    const headers = ['Timestamp', 'Thread URL', 'Plugin Slug', 'Sentiment', 'Confidence', 'Recommended Template', 'Prior Review Found', 'Troubleshooting Detected', 'Last Reply Is HC', 'Template Copied', 'Template Copied Key', 'Draft Generated', 'Draft Copied', 'Draft Edited', 'Template Fallback', 'Model Used'];
     const rows = log.map(e => [
       e.timestamp,
       e.threadUrl,
@@ -857,6 +1107,11 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       e.lastReplyIsHC === undefined ? '' : (e.lastReplyIsHC ? 'Yes' : 'No'),
       e.templateCopied ? 'Yes' : 'No',
       e.templateCopiedKey || '',
+      e.draftGenerated ? 'Yes' : 'No',
+      e.draftCopied ? 'Yes' : 'No',
+      e.draftEdited ? 'Yes' : 'No',
+      e.templateFallback ? 'Yes' : 'No',
+      e.modelUsed || '',
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
 
     return [headers.join(','), ...rows].join('\n');
@@ -869,14 +1124,19 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     const log = getAnalyticsLog();
     const total = log.length;
     if (total === 0) {
-      return { total: 0, good: 0, neutral: 0, bad: 0, inconclusive: 0, copyRate: 0, templateCounts: {}, pluginCounts: {}, recentEntries: [] };
+      return { total: 0, good: 0, neutral: 0, bad: 0, inconclusive: 0, copyRate: 0, draftRate: 0, draftCopyRate: 0, templateFallbackRate: 0, templateCounts: {}, pluginCounts: {}, recentEntries: [] };
     }
 
     const good = log.filter(e => e.sentiment === 'good').length;
     const neutral = log.filter(e => e.sentiment === 'neutral').length;
     const bad = log.filter(e => e.sentiment === 'bad').length;
     const inconclusive = log.filter(e => e.sentiment === 'inconclusive').length;
-    const copied = log.filter(e => e.templateCopied).length;
+    const copied = log.filter(e => e.templateCopied || e.draftCopied).length;
+
+    // v3.0 draft stats
+    const draftGenerated = log.filter(e => e.draftGenerated).length;
+    const draftCopied = log.filter(e => e.draftCopied).length;
+    const templateFallback = log.filter(e => e.templateFallback).length;
 
     // Template recommendation counts
     const templateCounts = {};
@@ -906,6 +1166,9 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       bad,
       inconclusive,
       copyRate: total > 0 ? Math.round((copied / total) * 100) : 0,
+      draftRate: total > 0 ? Math.round((draftGenerated / total) * 100) : 0,
+      draftCopyRate: draftGenerated > 0 ? Math.round((draftCopied / draftGenerated) * 100) : 0,
+      templateFallbackRate: total > 0 ? Math.round((templateFallback / total) * 100) : 0,
       templateCounts,
       pluginCounts: Object.fromEntries(sortedPlugins),
       recentEntries: log.slice(-50).reverse(),
@@ -1161,8 +1424,36 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
    * Groq uses an OpenAI-compatible API format.
    * Returns a promise that resolves with the parsed AI response.
    */
+  /**
+   * Attempts to extract key fields from a malformed AI response via regex.
+   * Returns a partial result with draftAvailable = false so the HC still
+   * gets sentiment + template fallback instead of a total failure.
+   */
+  function partialJsonRecovery(raw) {
+    const sentimentMatch = raw.match(/"sentiment"\s*:\s*"(good|neutral|bad|inconclusive)"/i);
+    const confidenceMatch = raw.match(/"confidence"\s*:\s*([\d.]+)/);
+    const templateMatch = raw.match(/"primaryTemplate"\s*:\s*"([A-G])"/i);
+    const reasoningMatch = raw.match(/"reasoning"\s*:\s*"([^"]{1,500})"/);
+
+    if (!sentimentMatch) return null; // Can't recover without sentiment
+
+    return {
+      sentiment: sentimentMatch[1].toLowerCase(),
+      confidence: confidenceMatch ? parseFloat(confidenceMatch[1]) : 0.5,
+      primaryTemplate: templateMatch ? templateMatch[1].toUpperCase() : 'E',
+      secondaryTemplate: null,
+      reasoning: reasoningMatch ? reasoningMatch[1] : 'Partial recovery — AI response was malformed.',
+      signals: [],
+      summary: null,
+      draftedMessage: null,
+      draftAvailable: false,
+      partialRecovery: true,
+    };
+  }
+
   function callGroq(threadText) {
     const apiKey = getApiKey();
+    const model = getModel();
 
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -1173,32 +1464,59 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           'Authorization': `Bearer ${apiKey}`,
         },
         data: JSON.stringify({
-          model: GROQ_MODEL,
+          model: model,
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
             { role: 'user', content: `Please analyze this WordPress.org support thread and provide your assessment:\n\n${threadText}` },
           ],
-          temperature: 0.2, // Low temperature for consistent analysis
-          max_tokens: 800,
+          temperature: 0.2,
+          max_tokens: 1200,
         }),
         onload: function (response) {
           try {
             const data = JSON.parse(response.responseText);
 
             if (data.error) {
+              // Detect rate limiting specifically
+              if (response.status === 429 || (data.error.message && /rate.?limit/i.test(data.error.message))) {
+                reject(new Error('Rate limited by Groq. Wait a moment and try again.'));
+                return;
+              }
               reject(new Error(data.error.message || 'Groq API error'));
               return;
             }
 
             const content = data.choices[0].message.content.trim();
 
-            // Parse the JSON response — handle potential markdown code blocks
+            // Strip markdown code fences if present
             let jsonStr = content;
             if (jsonStr.startsWith('```')) {
               jsonStr = jsonStr.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
             }
 
-            const result = JSON.parse(jsonStr);
+            let result;
+            try {
+              result = JSON.parse(jsonStr);
+            } catch (parseErr) {
+              // Partial JSON recovery — extract what we can via regex
+              console.warn('WRH: JSON parse failed, attempting partial recovery:', parseErr.message);
+              const recovered = partialJsonRecovery(content);
+              if (recovered) {
+                console.info('WRH: Partial recovery succeeded — sentiment:', recovered.sentiment);
+                resolve(recovered);
+                return;
+              }
+              reject(new Error(`Failed to parse AI response: ${parseErr.message}`));
+              return;
+            }
+
+            // Normalize new fields
+            result.summary = result.summary || null;
+            result.draftedMessage = result.draftedMessage || null;
+            result.draftAvailable = !!(result.draftedMessage && result.draftedMessage.trim().length > 0);
+            result.partialRecovery = false;
+            result.modelUsed = model;
+
             resolve(result);
           } catch (err) {
             reject(new Error(`Failed to parse AI response: ${err.message}`));
@@ -1332,49 +1650,147 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     // Detect plugin and build review link
     const pluginInfo = detectPluginReviewLink();
     const reviewLink = pluginInfo ? pluginInfo.reviewUrl : '[REVIEW_LINK]';
-    const reviewLinkDetected = !!pluginInfo;
+
+    // Substitute placeholders in draft or template text
+    const substitutePlaceholders = (text) => {
+      let out = text;
+      if (thread.author) out = out.replace(/\[NAME\]/g, thread.author);
+      out = out.replace(/\[REVIEW_LINK\]/g, reviewLink);
+      return out;
+    };
 
     const getTemplateText = (key) => {
-      let text = TEMPLATES[key].text;
-      if (thread.author) {
-        text = text.replace('[NAME]', thread.author);
-      }
-      text = text.replace('[REVIEW_LINK]', reviewLink);
-      return text;
+      if (!TEMPLATES[key]) return '';
+      return substitutePlaceholders(TEMPLATES[key].text);
     };
 
     const isNeutral = aiResult.sentiment === 'neutral';
     const pt = aiResult.primaryTemplate || 'E';
     const st = aiResult.secondaryTemplate || null;
+    const priorReviewFound = reviewCheck && reviewCheck.found;
+    const modelName = aiResult.modelUsed || getModel();
 
-    let secondaryHTML = '';
-    if (!isNeutral && st && TEMPLATES[st]) {
-      secondaryHTML = `
-        <hr class="wrh-divider">
-        <div class="wrh-label">ALTERNATIVE TEMPLATE (OPTIONAL)</div>
-        <div class="wrh-template-card wrh-secondary">
-          <h3>Template ${st} — ${TEMPLATES[st].name}</h3>
-          <p>${TEMPLATES[st].description}</p>
-          <button class="wrh-copy-btn" data-template="${st}">📋 Copy Template ${st}</button>
+    // ── 1. Summary banner ──
+    let summaryHTML = '';
+    if (aiResult.summary) {
+      summaryHTML = `
+        <div class="wrh-summary-banner">
+          <span aria-hidden="true">📝</span>
+          <span>${escapeHTML(aiResult.summary)}</span>
         </div>
       `;
     }
 
-    // For neutral: build the skip (Template E) fallback card
-    let skipFallbackHTML = '';
-    if (isNeutral) {
-      skipFallbackHTML = `
-        <hr class="wrh-divider">
-        <div class="wrh-label">PREFER TO SKIP?</div>
-        <div class="wrh-skip-card">
-          <h3>Template E — ${TEMPLATES.E.name}</h3>
-          <p>Still unsure? Close gracefully instead. No review ask.</p>
-          <button class="wrh-skip-btn wrh-copy-btn" data-template="E">📋 Copy Template E (Skip)</button>
+    // ── 2. Plugin + review check banners ──
+    let pluginBannerHTML = '';
+    if (pluginInfo) {
+      pluginBannerHTML = `
+        <div style="background: #f0f6fc; border: 1px solid #c8d6e5; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <span aria-hidden="true">🔗</span>
+          <span>Plugin: <strong>${escapeHTML(pluginInfo.slug)}</strong></span>
+        </div>
+      `;
+    } else {
+      pluginBannerHTML = `
+        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <span aria-hidden="true">⚠️</span>
+          <span>Could not detect plugin — <code>[REVIEW_LINK]</code> will remain as placeholder. Replace it manually.</span>
         </div>
       `;
     }
 
-    // For neutral: build the grey area guidance box
+    let reviewCheckHTML = '';
+    if (priorReviewFound) {
+      reviewCheckHTML = `
+        <div style="background: #fef2f2; border: 1px solid #f5c6c6; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 16px;" aria-hidden="true">⚠️</span>
+          <span><strong>This user has already reviewed ${escapeHTML(pluginInfo ? pluginInfo.slug : 'this plugin')}.</strong> Draft hidden — use Template E (Graceful Close) below.</span>
+        </div>
+      `;
+    } else if (reviewCheck && !reviewCheck.found && !reviewCheck.error) {
+      const disclaimer = reviewCheck.totalPages > reviewCheck.pagesFetched
+        ? ` (checked ${reviewCheck.pagesFetched} of ${reviewCheck.totalPages} review pages)`
+        : '';
+      reviewCheckHTML = `
+        <div style="background: #edfcf2; border: 1px solid #b8e6cc; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 16px;" aria-hidden="true">✅</span>
+          <span>No existing review found${disclaimer} — safe to ask.</span>
+        </div>
+      `;
+    }
+
+    // ── 3. Troubleshooting banner ──
+    let troubleshootingHTML = '';
+    if (troubleshootingCheck && troubleshootingCheck.isTroubleshooting && aiResult.sentiment !== 'good' && !priorReviewFound) {
+      const lastResponder = troubleshootingCheck.signals.lastReplyIsHC
+        ? escapeHTML(troubleshootingCheck.signals.hcName)
+        : 'a support agent';
+      troubleshootingHTML = `
+        <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: flex-start; gap: 8px;">
+          <span style="font-size: 16px; flex-shrink: 0;" aria-hidden="true">🔧</span>
+          <div>
+            <strong>Thread may still be in progress.</strong> The last reply is from ${lastResponder} and no resolution has been confirmed yet. You can wait for a response, or use Template F (Delayed Follow-Up) to check in.
+            <div style="margin-top: 8px;">
+              <button class="wrh-copy-btn secondary" data-template="F" style="font-size: 12px; padding: 4px 10px;">📋 Copy Template F</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ── 4. AI-drafted message section ──
+    let draftSectionHTML = '';
+    const draftText = aiResult.draftAvailable ? substitutePlaceholders(aiResult.draftedMessage) : '';
+
+    if (aiResult.draftAvailable && !priorReviewFound) {
+      // Check for unresolved placeholders
+      const hasPlaceholders = /\[REVIEW_LINK\]|\[NAME\]/.test(draftText);
+      const placeholderWarning = hasPlaceholders
+        ? `<div class="wrh-placeholder-warning">⚠️ Draft contains placeholder text. Replace before posting.</div>`
+        : '';
+
+      draftSectionHTML = `
+        <div class="wrh-draft-section">
+          <div class="wrh-label">✍️ AI-DRAFTED MESSAGE</div>
+          <textarea class="wrh-draft-textarea" id="wrh-draft-textarea" rows="6"
+            aria-label="AI-drafted review request message">${escapeHTML(draftText)}</textarea>
+          ${placeholderWarning}
+          <button class="wrh-copy-btn" id="wrh-copy-draft" aria-label="Copy draft message to clipboard">📋 Copy Draft</button>
+        </div>
+      `;
+    } else if (aiResult.draftAvailable && priorReviewFound) {
+      // Draft exists but prior review found — collapsed toggle
+      const hasPlaceholders = /\[REVIEW_LINK\]|\[NAME\]/.test(draftText);
+      const placeholderWarning = hasPlaceholders
+        ? `<div class="wrh-placeholder-warning">⚠️ Draft contains placeholder text. Replace before posting.</div>`
+        : '';
+
+      draftSectionHTML = `
+        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <span aria-hidden="true">⚠️</span>
+          <span>AI draft generated, but this user already reviewed. <a href="#" class="wrh-toggle-link" id="wrh-toggle-draft">Show draft anyway ▸</a></span>
+        </div>
+        <div class="wrh-collapsed-draft" id="wrh-collapsed-draft">
+          <div class="wrh-draft-section">
+            <div class="wrh-label">✍️ AI-DRAFTED MESSAGE</div>
+            <textarea class="wrh-draft-textarea" id="wrh-draft-textarea" rows="6"
+              aria-label="AI-drafted review request message">${escapeHTML(draftText)}</textarea>
+            ${placeholderWarning}
+            <button class="wrh-copy-btn" id="wrh-copy-draft" aria-label="Copy draft message to clipboard">📋 Copy Draft</button>
+          </div>
+        </div>
+      `;
+    } else {
+      // No draft available — amber fallback
+      draftSectionHTML = `
+        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <span aria-hidden="true">⚠️</span>
+          <span>AI draft unavailable — use a template below.</span>
+        </div>
+      `;
+    }
+
+    // ── 5. Grey area guidance (neutral sentiment) ──
     let greyGuidanceHTML = '';
     if (isNeutral) {
       greyGuidanceHTML = `
@@ -1386,172 +1802,194 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
       `;
     }
 
-    // Prior review check banner
-    let reviewCheckHTML = '';
-    if (reviewCheck && reviewCheck.found) {
-      reviewCheckHTML = `
-        <div style="background: #fef2f2; border: 1px solid #f5c6c6; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 16px;">⚠️</span>
-          <span><strong>This user has already reviewed ${pluginInfo ? pluginInfo.slug : 'this plugin'}.</strong> Template overridden to E (Graceful Close) — no review ask needed.</span>
-        </div>
-      `;
-    } else if (reviewCheck && !reviewCheck.found && !reviewCheck.error) {
-      const disclaimer = reviewCheck.totalPages > reviewCheck.pagesFetched
-        ? ` (checked ${reviewCheck.pagesFetched} of ${reviewCheck.totalPages} review pages)`
-        : '';
-      reviewCheckHTML = `
-        <div style="background: #edfcf2; border: 1px solid #b8e6cc; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 16px;">✅</span>
-          <span>No existing review found${disclaimer} — safe to ask.</span>
-        </div>
-      `;
-    }
-
-    // Troubleshooting status banner (only when isTroubleshooting AND sentiment is not good)
-    let troubleshootingHTML = '';
-    if (troubleshootingCheck && troubleshootingCheck.isTroubleshooting && aiResult.sentiment !== 'good' && !(reviewCheck && reviewCheck.found)) {
-      const escapeHTML = (str) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      const lastResponder = troubleshootingCheck.signals.lastReplyIsHC
-        ? escapeHTML(troubleshootingCheck.signals.hcName)
-        : 'a support agent';
-      troubleshootingHTML = `
-        <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: flex-start; gap: 8px;">
-          <span style="font-size: 16px; flex-shrink: 0;">🔧</span>
-          <div>
-            <strong>Thread may still be in progress.</strong> The last reply is from ${lastResponder} and no resolution has been confirmed yet. You can wait for a response, or use Template F (Delayed Follow-Up) to check in and request a review proactively.
-            <div style="margin-top: 8px;">
-              <button class="wrh-copy-btn" data-template="F" style="font-size: 12px; padding: 4px 10px; cursor: pointer; border: 1px solid #f59e0b; border-radius: 4px; background: #fff; color: #92400e;">📋 Copy Template F</button>
-            </div>
-          </div>
-        </div>
-      `;
-    }
+    // ── 6. Reasoning + signals (escaped) ──
+    const reasoningHTML = aiResult.reasoning ? `
+      <div class="wrh-label">💡 AI REASONING</div>
+      <div class="wrh-reasoning">${escapeHTML(aiResult.reasoning)}</div>
+    ` : '';
 
     const signalsHTML = (aiResult.signals || []).map(s => `
       <li>
-        <span class="wrh-signal-icon">${signalIcons[s.type] || 'ℹ️'}</span>
-        <span>${s.text}</span>
+        <span class="wrh-signal-icon" aria-hidden="true">${signalIcons[s.type] || 'ℹ️'}</span>
+        <span>${escapeHTML(s.text)}</span>
       </li>
     `).join('');
 
-    overlay.innerHTML = `
-      <div id="wrh-panel">
-        <div id="wrh-panel-header">
-          <h2>📊 Thread Analysis</h2>
-          <button id="wrh-close-btn" title="Close">&times;</button>
+    // ── 7. Template cards ──
+    let templateCardsHTML = '';
+    const templateLabel = isNeutral ? 'SUGGESTED SOFTER TEMPLATE' : 'PRE-WRITTEN TEMPLATES';
+
+    templateCardsHTML += `
+      <hr class="wrh-divider">
+      <div class="wrh-label">${templateLabel}</div>
+      <div class="wrh-template-card">
+        <h3>Template ${escapeHTML(pt)} — ${TEMPLATES[pt] ? escapeHTML(TEMPLATES[pt].name) : 'Unknown'}</h3>
+        <p>${TEMPLATES[pt] ? escapeHTML(TEMPLATES[pt].description) : ''}</p>
+        <button class="wrh-copy-btn secondary" data-template="${escapeHTML(pt)}">📋 Copy Template ${escapeHTML(pt)}</button>
+      </div>
+    `;
+
+    if (!isNeutral && st && TEMPLATES[st]) {
+      templateCardsHTML += `
+        <div class="wrh-label" style="margin-top: 12px;">ALTERNATIVE TEMPLATE</div>
+        <div class="wrh-template-card wrh-secondary">
+          <h3>Template ${escapeHTML(st)} — ${escapeHTML(TEMPLATES[st].name)}</h3>
+          <p>${escapeHTML(TEMPLATES[st].description)}</p>
+          <button class="wrh-copy-btn secondary" data-template="${escapeHTML(st)}">📋 Copy Template ${escapeHTML(st)}</button>
         </div>
-        <div id="wrh-panel-body">
+      `;
+    }
+
+    if (isNeutral) {
+      templateCardsHTML += `
+        <hr class="wrh-divider">
+        <div class="wrh-label">PREFER TO SKIP?</div>
+        <div class="wrh-skip-card">
+          <h3>Template E — ${escapeHTML(TEMPLATES.E.name)}</h3>
+          <p>Still unsure? Close gracefully instead. No review ask.</p>
+          <button class="wrh-copy-btn secondary" data-template="E">📋 Copy Template E (Skip)</button>
+        </div>
+      `;
+    }
+
+    // ── 8. Partial recovery warning ──
+    let partialRecoveryHTML = '';
+    if (aiResult.partialRecovery) {
+      partialRecoveryHTML = `
+        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <span aria-hidden="true">⚠️</span>
+          <span>AI returned a malformed response. Sentiment and template were recovered, but the draft and summary are unavailable.</span>
+        </div>
+      `;
+    }
+
+    // ── Assemble panel ──
+    overlay.innerHTML = `
+      <div id="wrh-panel" role="dialog" aria-modal="true" aria-labelledby="wrh-panel-title">
+        <div id="wrh-panel-header">
+          <h2 id="wrh-panel-title">📊 Thread Analysis</h2>
+          <button id="wrh-close-btn" title="Close" aria-label="Close panel">&times;</button>
+        </div>
+        <div id="wrh-panel-body" aria-busy="false">
           <div class="wrh-sentiment ${sentimentClass}">${sentimentLabel}</div>
 
           <div class="wrh-confidence">
             AI Confidence: <strong>${confidence}%</strong>
-            <div class="wrh-confidence-bar">
+            <div class="wrh-confidence-bar" role="progressbar" aria-valuenow="${confidence}" aria-valuemin="0" aria-valuemax="100">
               <div class="wrh-confidence-fill ${confClass}" style="width: ${confidence}%;"></div>
             </div>
           </div>
 
           <div class="wrh-stats">
-            <span class="wrh-stat"><strong>${thread.agentReplyCount}</strong> agent replies</span>
-            <span class="wrh-stat"><strong>${thread.userReplyCount}</strong> user replies</span>
-            <span class="wrh-stat"><strong>${thread.replies.length}</strong> total posts</span>
-            ${thread.threadSpanDays > 0 ? `<span class="wrh-stat"><strong>${thread.threadSpanDays}</strong> day span</span>` : ''}
+            <span class="wrh-stat"><strong>${thread.agentReplyCount}</strong> agent</span>
+            <span class="wrh-stat"><strong>${thread.userReplyCount}</strong> user</span>
+            <span class="wrh-stat"><strong>${thread.replies.length}</strong> total</span>
+            ${thread.threadSpanDays > 0 ? `<span class="wrh-stat"><strong>${thread.threadSpanDays}</strong> day</span>` : ''}
           </div>
 
-          ${pluginInfo ? `
-            <div style="background: #f0f6fc; border: 1px solid #c8d6e5; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
-              <span>🔗</span>
-              <span>Plugin detected: <strong>${pluginInfo.slug}</strong> — review link will be auto-filled in templates</span>
-            </div>
-          ` : `
-            <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
-              <span>⚠️</span>
-              <span>Could not detect plugin — <code>[REVIEW_LINK]</code> will remain as placeholder. Replace it manually.</span>
-            </div>
-          `}
-
+          ${summaryHTML}
+          ${pluginBannerHTML}
           ${reviewCheckHTML}
-
           ${troubleshootingHTML}
-
+          ${partialRecoveryHTML}
           ${greyGuidanceHTML}
 
-          ${aiResult.reasoning ? `
-            <div class="wrh-label">AI REASONING</div>
-            <div class="wrh-reasoning">${aiResult.reasoning}</div>
+          ${draftSectionHTML}
+
+          ${reasoningHTML}
+
+          ${signalsHTML.length > 0 ? `
+            <div class="wrh-label">SIGNALS DETECTED</div>
+            <ul class="wrh-signals">${signalsHTML}</ul>
           ` : ''}
 
-          <div class="wrh-label">SIGNALS DETECTED</div>
-          <ul class="wrh-signals">
-            ${signalsHTML}
-          </ul>
-
-          <hr class="wrh-divider">
-
-          <div class="wrh-label">${isNeutral ? 'SUGGESTED SOFTER TEMPLATE' : 'RECOMMENDED TEMPLATE'}</div>
-          <div class="wrh-template-card">
-            <h3>Template ${pt} — ${TEMPLATES[pt] ? TEMPLATES[pt].name : 'Unknown'}</h3>
-            <p>${TEMPLATES[pt] ? TEMPLATES[pt].description : ''}</p>
-            <button class="wrh-copy-btn" data-template="${pt}">📋 Copy Template ${pt}</button>
-          </div>
-
-          ${secondaryHTML}
-          ${skipFallbackHTML}
+          ${templateCardsHTML}
 
           <div class="wrh-powered-by">
-            Powered by Groq (Llama 3.1) · Analysis runs on-demand only
+            Powered by Groq (${escapeHTML(modelName)}) · Analysis runs on-demand only
           </div>
         </div>
       </div>
+      <div class="wrh-sr-only" aria-live="polite" id="wrh-live-region"></div>
     `;
 
     document.body.appendChild(overlay);
 
-    // Event listeners
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.remove();
-    });
-    overlay.querySelector('#wrh-close-btn').addEventListener('click', () => overlay.remove());
+    // ── Event listeners ──
+    setupOverlayDismiss(overlay);
 
-    const escHandler = (e) => {
-      if (e.key === 'Escape') {
-        overlay.remove();
-        document.removeEventListener('keydown', escHandler);
-      }
-    };
-    document.addEventListener('keydown', escHandler);
+    // Focus trap: move focus to close button on open
+    const closeBtn = overlay.querySelector('#wrh-close-btn');
+    if (closeBtn) closeBtn.focus();
 
-    // Copy buttons
-    overlay.querySelectorAll('.wrh-copy-btn').forEach(btn => {
+    // Collapsed draft toggle
+    const toggleLink = overlay.querySelector('#wrh-toggle-draft');
+    const collapsedDraft = overlay.querySelector('#wrh-collapsed-draft');
+    if (toggleLink && collapsedDraft) {
+      toggleLink.addEventListener('click', (e) => {
+        e.preventDefault();
+        collapsedDraft.classList.toggle('expanded');
+        toggleLink.textContent = collapsedDraft.classList.contains('expanded')
+          ? 'Hide draft ▾'
+          : 'Show draft anyway ▸';
+      });
+    }
+
+    // Store original draft text for draftEdited detection
+    const originalDraft = draftText;
+
+    // Copy Draft button
+    const copyDraftBtn = overlay.querySelector('#wrh-copy-draft');
+    if (copyDraftBtn) {
+      copyDraftBtn.addEventListener('click', () => {
+        const textarea = overlay.querySelector('#wrh-draft-textarea');
+        const currentText = textarea ? textarea.value : originalDraft;
+        copyToClipboard(currentText);
+
+        // Detect if draft was edited (trim to prevent whitespace-only false positives)
+        const wasEdited = currentText.trim() !== originalDraft.trim();
+
+        if (logEntryId) {
+          updateLogEntry(logEntryId, {
+            draftCopied: true,
+            draftEdited: wasEdited,
+            templateFallback: false,
+          });
+        }
+
+        copyDraftBtn.textContent = '✅ Copied!';
+        copyDraftBtn.classList.add('copied');
+        const liveRegion = overlay.querySelector('#wrh-live-region');
+        if (liveRegion) liveRegion.textContent = 'Draft copied to clipboard';
+        setTimeout(() => {
+          copyDraftBtn.textContent = '📋 Copy Draft';
+          copyDraftBtn.classList.remove('copied');
+        }, 2000);
+      });
+    }
+
+    // Template copy buttons
+    overlay.querySelectorAll('.wrh-copy-btn[data-template]').forEach(btn => {
       btn.addEventListener('click', () => {
         const key = btn.dataset.template;
         const text = getTemplateText(key);
+        copyToClipboard(text);
 
-        try {
-          if (typeof GM_setClipboard === 'function') {
-            GM_setClipboard(text, 'text');
-          } else {
-            navigator.clipboard.writeText(text);
-          }
-        } catch (err) {
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          ta.style.position = 'fixed';
-          ta.style.opacity = '0';
-          document.body.appendChild(ta);
-          ta.select();
-          document.execCommand('copy');
-          ta.remove();
-        }
-
-        // Log template copy in analytics
         if (logEntryId) {
-          updateLogEntry(logEntryId, { templateCopied: true, templateCopiedKey: key });
+          updateLogEntry(logEntryId, {
+            templateCopied: true,
+            templateCopiedKey: key,
+            templateFallback: true,
+          });
         }
 
+        const originalLabel = btn.textContent;
         btn.textContent = '✅ Copied!';
         btn.classList.add('copied');
+        const liveRegion = overlay.querySelector('#wrh-live-region');
+        if (liveRegion) liveRegion.textContent = `Template ${key} copied to clipboard`;
         setTimeout(() => {
-          btn.textContent = `📋 Copy Template ${key}`;
+          btn.textContent = originalLabel;
           btn.classList.remove('copied');
         }, 2000);
       });
@@ -1640,12 +2078,19 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
               </div>
               <div class="wrh-stats-card good">
                 <div class="wrh-stats-number">${stats.copyRate}%</div>
-                <div class="wrh-stats-desc">Template Copy Rate</div>
+                <div class="wrh-stats-desc">Copy Rate</div>
               </div>
               <div class="wrh-stats-card good">
                 <div class="wrh-stats-number">${stats.good}</div>
                 <div class="wrh-stats-desc">Good Sentiment</div>
               </div>
+            </div>
+
+            <div class="wrh-label">AI DRAFT RATE</div>
+            <div class="wrh-stats" style="margin-bottom: 18px;">
+              <span class="wrh-stat"><strong>${stats.draftRate}%</strong> AI draft</span>
+              <span class="wrh-stat"><strong>${stats.templateFallbackRate}%</strong> template fallback</span>
+              <span class="wrh-stat"><strong>${stats.draftCopyRate}%</strong> drafts copied</span>
             </div>
 
             <div class="wrh-label">SENTIMENT BREAKDOWN</div>
@@ -1701,20 +2146,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     `;
 
     document.body.appendChild(overlay);
-
-    // Event listeners
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.remove();
-    });
-    overlay.querySelector('#wrh-close-btn').addEventListener('click', () => overlay.remove());
-
-    const escHandler = (e) => {
-      if (e.key === 'Escape') {
-        overlay.remove();
-        document.removeEventListener('keydown', escHandler);
-      }
-    };
-    document.addEventListener('keydown', escHandler);
+    setupOverlayDismiss(overlay);
 
     // Export CSV
     overlay.querySelector('#wrh-export-csv').addEventListener('click', () => {
@@ -1752,31 +2184,57 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
     overlay.id = 'wrh-overlay';
 
     overlay.innerHTML = `
-      <div id="wrh-panel" style="width: 440px;">
+      <div id="wrh-panel" style="width: 440px;" role="dialog" aria-modal="true" aria-labelledby="wrh-error-title">
         <div id="wrh-panel-header">
-          <h2>📊 Thread Analysis</h2>
-          <button id="wrh-close-btn" title="Close">&times;</button>
+          <h2 id="wrh-error-title">📊 Thread Analysis</h2>
+          <button id="wrh-close-btn" title="Close" aria-label="Close panel">&times;</button>
         </div>
         <div id="wrh-panel-body">
           <div class="wrh-error">
             <strong>Analysis Failed</strong>
-            ${message}
+            ${escapeHTML(message)}
           </div>
         </div>
       </div>
     `;
 
     document.body.appendChild(overlay);
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.remove();
-    });
-    overlay.querySelector('#wrh-close-btn').addEventListener('click', () => overlay.remove());
+    setupOverlayDismiss(overlay);
   }
 
   // ──────────────────────────────────────────────
   // 9. INITIALIZATION
   // ──────────────────────────────────────────────
+
+  /**
+   * Shows a loading skeleton in the panel while the API call is in progress.
+   */
+  function showLoadingPanel() {
+    const existing = document.getElementById('wrh-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'wrh-overlay';
+
+    overlay.innerHTML = `
+      <div id="wrh-panel" role="dialog" aria-modal="true" aria-labelledby="wrh-loading-title">
+        <div id="wrh-panel-header">
+          <h2 id="wrh-loading-title">📊 Thread Analysis</h2>
+          <button id="wrh-close-btn" title="Close" aria-label="Close panel">&times;</button>
+        </div>
+        <div id="wrh-panel-body" aria-busy="true">
+          <div class="wrh-loading">
+            <div class="wrh-loading-spinner"></div>
+            <div class="wrh-loading-text">Analyzing thread... this takes 5–15 seconds</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+    setupOverlayDismiss(overlay);
+    return overlay;
+  }
 
   function init() {
     // Floating analyze button
@@ -1811,7 +2269,9 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
         return;
       }
 
-      fab.innerHTML = '⏳ Analyzing with AI…';
+      // Prevent duplicate overlays on rapid clicks
+      if (fab.disabled) return;
+      fab.innerHTML = '⏳ Analyzing…';
       fab.disabled = true;
 
       try {
@@ -1825,14 +2285,34 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           return;
         }
 
-        // 2. Format thread for AI + check troubleshooting status (local, synchronous)
+        // 2. Open loading skeleton immediately
+        const loadingOverlay = showLoadingPanel();
+
+        // 3. Format thread for AI + check troubleshooting status (local, synchronous)
         const threadText = formatThreadForAI(thread);
         const troubleshootingCheck = checkTroubleshootingStatus(thread);
 
-        // 3. Detect plugin info (used for review link + prior review check)
+        // 4. Context-length warning for 8B model on long threads
+        const estimatedTokens = Math.ceil(threadText.length / 4);
+        const currentModel = getModel();
+        if (estimatedTokens > 6000 && currentModel === 'llama-3.1-8b-instant') {
+          // Inject a dismissible tip into the loading panel
+          const panelBody = loadingOverlay.querySelector('#wrh-panel-body');
+          if (panelBody) {
+            const warning = document.createElement('div');
+            warning.className = 'wrh-context-warning';
+            warning.innerHTML = `
+              <span>💡 This is a long thread (~${Math.round(estimatedTokens / 1000)}K tokens). The 70B model may produce better results. Change in ⚙️ Settings.</span>
+              <button aria-label="Dismiss warning" onclick="this.parentElement.remove()">×</button>
+            `;
+            panelBody.insertBefore(warning, panelBody.firstChild);
+          }
+        }
+
+        // 5. Detect plugin info (used for review link + prior review check)
         const pluginInfo = detectPluginReviewLink();
 
-        // 4. Run AI analysis and prior review check in parallel
+        // 6. Run AI analysis and prior review check in parallel
         const reviewCheckPromise = (pluginInfo && thread.authorSlug)
           ? checkExistingReview(pluginInfo.slug, thread.authorSlug)
           : Promise.resolve(null);
@@ -1842,13 +2322,13 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           reviewCheckPromise,
         ]);
 
-        // 5. Override to Template E if user already left a review
+        // 7. Override to Template E if user already left a review
         if (reviewCheck && reviewCheck.found) {
           aiResult.primaryTemplate = 'E';
           aiResult.secondaryTemplate = null;
         }
 
-        // 6. Log analytics (no PII — just URL, plugin, sentiment, template)
+        // 8. Log analytics (no PII — just URL, plugin, sentiment, template)
         const logEntryId = addLogEntry({
           pluginSlug: pluginInfo ? pluginInfo.slug : null,
           sentiment: aiResult.sentiment,
@@ -1857,9 +2337,11 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           priorReviewFound: reviewCheck ? reviewCheck.found : null,
           troubleshootingDetected: troubleshootingCheck.isTroubleshooting,
           lastReplyIsHC: troubleshootingCheck.signals.lastReplyIsHC,
+          draftGenerated: aiResult.draftAvailable || false,
+          modelUsed: aiResult.modelUsed || currentModel,
         });
 
-        // 7. Render results (pass logEntryId, reviewCheck, and troubleshootingCheck)
+        // 9. Replace loading skeleton with results
         renderPanel(aiResult, thread, logEntryId, reviewCheck, troubleshootingCheck);
 
       } catch (err) {
@@ -1870,7 +2352,7 @@ You MUST respond with valid JSON only, no markdown formatting, no code blocks. T
           errorMsg = 'Invalid API key. Click the ⚙️ button to update your key.';
         } else if (errorMsg.includes('quota')) {
           errorMsg = 'Groq API quota exceeded. Check your usage at console.groq.com.';
-        } else if (errorMsg.includes('rate limit')) {
+        } else if (errorMsg.includes('rate limit') || errorMsg.includes('Rate limited')) {
           errorMsg = 'Rate limited by Groq. Wait a moment and try again.';
         }
 
