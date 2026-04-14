@@ -2,7 +2,7 @@
 
 All notable changes to WPorg Review Helper will be documented in this file.
 
-## [3.0.0] - 2026-04-12
+## [3.0.1] - 2026-04-12
 - **AI-drafted messages**: The AI now drafts a personalized review request message for each thread, shown in an editable textarea. Copy it, tweak it, or fall back to templates.
 - **Thread summary**: One-line summary of the thread (issue + resolution) shown at the top of the results panel.
 - **Model selector**: Choose between llama-3.1-8b-instant, llama-3.3-70b-versatile (new default), or gemma2-9b-it in Settings.
