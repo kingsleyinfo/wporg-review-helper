@@ -2,6 +2,12 @@
 
 All notable changes to WPorg Review Helper will be documented in this file.
 
+## [3.0.2] - 2026-04-19
+- **Fix: wrong sentiment on every thread.** The parser's container selector (`.topic, .reply`) was also matching `<body>` (WP.org sets `<body class="topic ...">`), creating a phantom duplicate of the first post and inverting the agent/user counts. Narrowed to `div[id^="post-"]`.
+- **Fix: OP role detection.** The old `.bbp-topic-started-by` and `.bb-topic-author` selectors don't exist in current WP.org markup, so `authorSlug` was always empty and role classification fell back to name matching. Now pulled from `.bbp-topic-author a.bbp-author-link` with proper slug extraction.
+- **Fix: "AI returned a malformed response" banner on every analysis.** Enabled Groq's `response_format: { type: "json_object" }` (OpenAI-compatible JSON mode, supported on Llama 3.x). Draft messages with embedded newlines, em-dashes, or quotes no longer break `JSON.parse`.
+- **Partial recovery upgrade:** if the model ever slips past JSON mode, regex recovery now pulls out `summary` and `draftedMessage` too (with proper unescaping), not just `sentiment`.
+
 ## [3.0.1] - 2026-04-12
 - **AI-drafted messages**: The AI now drafts a personalized review request message for each thread, shown in an editable textarea. Copy it, tweak it, or fall back to templates.
 - **Thread summary**: One-line summary of the thread (issue + resolution) shown at the top of the results panel.
