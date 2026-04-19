@@ -3,7 +3,7 @@
 // @namespace    https://github.com/Kingsleyinfo/wporg-review-helper
 // @updateURL    https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/Kingsleyinfo/wporg-review-helper/master/tampermonkey/review-helper.user.js
-// @version      3.0.1
+// @version      3.0.2
 // @description  Analyzes WordPress.org support threads using AI, drafts personalized review request messages, and recommends templates based on customer sentiment.
 // @author       Kay (Kingsleyinfo)
 // @match        https://wordpress.org/support/topic/*
@@ -1113,26 +1113,25 @@ You MUST respond with valid JSON only. No markdown formatting, no code blocks, n
    * Parses the support thread into structured data.
    */
   function parseThread() {
-    // Get the thread author (original poster)
-    const topicAuthorEl = document.querySelector('.bbp-topic-started-by a.bbp-author-link, #bbpress-forums .bb-topic-author a');
+    // Get the thread author (original poster) from the topic-author block.
+    // Current WP.org markup: <div class="bbp-topic-author"><a class="bbp-author-link" href="/support/users/<slug>/">...<span class="bbp-author-name">Name</span></a>
     let authorName = '';
     let authorSlug = '';
 
-    if (topicAuthorEl) {
-      authorName = topicAuthorEl.textContent.trim();
-      const href = topicAuthorEl.getAttribute('href') || '';
+    const topicAuthorLink = document.querySelector('.bbp-topic-author a.bbp-author-link');
+    if (topicAuthorLink) {
+      const nameEl = topicAuthorLink.querySelector('.bbp-author-name');
+      authorName = (nameEl ? nameEl.textContent : topicAuthorLink.textContent).trim();
+      const href = topicAuthorLink.getAttribute('href') || '';
       const slugMatch = href.match(/\/users\/([^/]+)/);
       if (slugMatch) authorSlug = slugMatch[1];
     }
 
-    if (!authorName) {
-      const firstAuthor = document.querySelector('.bbp-topic-author .bbp-author-name, .topic .bbp-reply-author .bbp-author-name');
-      if (firstAuthor) authorName = firstAuthor.textContent.trim();
-    }
-
-    // Parse all replies
+    // Parse all replies. Use post-* IDs only — bbPress wraps each post (topic + replies)
+    // in <div id="post-NNNNN">. Selectors like `.topic` / `.reply` also match <body>
+    // and sidebar widgets, which produced phantom duplicate entries and inverted role counts.
     const replies = [];
-    const replyContainers = document.querySelectorAll('[id^="post-"], .bbp-reply, .topic, .reply');
+    const replyContainers = document.querySelectorAll('div[id^="post-"]');
 
     if (replyContainers.length > 0) {
       replyContainers.forEach(container => {
@@ -1363,17 +1362,25 @@ You MUST respond with valid JSON only. No markdown formatting, no code blocks, n
     const sentimentMatch = raw.match(/"sentiment"\s*:\s*"(good|neutral|bad|inconclusive)"/i);
     const confidenceMatch = raw.match(/"confidence"\s*:\s*([\d.]+)/);
     const reasoningMatch = raw.match(/"reasoning"\s*:\s*"([^"]{1,500})"/);
+    // Summary and draftedMessage may contain escaped quotes; match lazily up to the next
+    // unescaped quote followed by a comma/brace boundary. Null literals are also allowed.
+    const summaryMatch = raw.match(/"summary"\s*:\s*(?:"((?:\\.|[^"\\])*)"|null)/);
+    const draftMatch = raw.match(/"draftedMessage"\s*:\s*(?:"((?:\\.|[^"\\])*)"|null)/);
 
     if (!sentimentMatch) return null; // Can't recover without sentiment
+
+    const unescape = s => s ? s.replace(/\\"/g, '"').replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\\\/g, '\\') : null;
+    const summary = summaryMatch && summaryMatch[1] ? unescape(summaryMatch[1]) : null;
+    const draft = draftMatch && draftMatch[1] ? unescape(draftMatch[1]) : null;
 
     return {
       sentiment: sentimentMatch[1].toLowerCase(),
       confidence: confidenceMatch ? parseFloat(confidenceMatch[1]) : 0.5,
       reasoning: reasoningMatch ? reasoningMatch[1] : 'Partial recovery — AI response was malformed.',
       signals: [],
-      summary: null,
-      draftedMessage: null,
-      draftAvailable: false,
+      summary,
+      draftedMessage: draft,
+      draftAvailable: !!(draft && draft.trim().length > 0),
       partialRecovery: true,
     };
   }
@@ -1398,6 +1405,11 @@ You MUST respond with valid JSON only. No markdown formatting, no code blocks, n
           ],
           temperature: 0.2,
           max_tokens: 1200,
+          // Force the model to emit valid JSON (OpenAI-compatible JSON mode, supported
+          // by Groq on Llama 3.x). Without this, draftedMessage strings with embedded
+          // newlines, em-dashes, or quotes routinely broke JSON.parse and the UI
+          // had to fall back to partial recovery (sentiment only).
+          response_format: { type: 'json_object' },
         }),
         onload: function (response) {
           try {
